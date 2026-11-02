@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}Outreach Agent{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
+<body>
+<header>
+  <span class="brand">⚡ Outreach Agent</span>
+  <nav>
+    <a href="{{ url_for('dashboard') }}">Leads</a>
+    <a href="{{ url_for('dashboard', view='due') }}">Follow-ups due</a>
+    <a href="{{ url_for('research_page') }}">Research a lead</a>
+    <a href="{{ url_for('queue_page') }}">Send queue</a>
+    <a href="{{ url_for('import_page') }}">Import</a>
+    <a href="{{ url_for('settings_page') }}">Settings</a>
+    <a href="{{ url_for('export') }}">Export .xlsx</a>
+  </nav>
+  <div class="right small">
+    <span title="Claude API"><span class="dot {{ 'on' if ai_ok else 'off' }}"></span>AI</span>
+    <span title="SMTP sending"><span class="dot {{ 'on' if smtp_ok else 'off' }}"></span>Send</span>
+    <span title="IMAP reply tracking"><span class="dot {{ 'on' if imap_ok else 'off' }}"></span>Inbox</span>
+    {% if JOBS.total and JOBS.done < JOBS.total %}<span class="chip" id="jobs">AI drafting {{ JOBS.done }}/{{ JOBS.total }}</span>{% endif %}
+    <form method="post" action="{{ url_for('check_inbox') }}"><button title="Look for replies, bounces and opt-outs">↻ Check replies</button></form>
+  </div>
+</header>
+<main>
+  {% with msgs = get_flashed_messages(with_categories=true) %}{% for cat, m in msgs %}
+    <div class="flash {{ cat }}">{{ m }}</div>{% endfor %}{% endwith %}
+  {% if JOBS.errors %}<details class="flash error"><summary>{{ JOBS.errors|length }} AI drafting error(s)</summary>{% for e in JOBS.errors[-10:] %}<div>{{ e }}</div>{% endfor %}</details>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+{% if JOBS.total and JOBS.done < JOBS.total %}
+<script>setTimeout(()=>fetch('{{ url_for("api_jobs") }}').then(r=>r.json()).then(j=>{const el=document.getElementById('jobs');if(el)el.textContent=`AI drafting ${j.done}/${j.total}`;if(j.done>=j.total)location.reload();else setTimeout(arguments.callee,4000)}),4000)</script>
+{% endif %}
+</body></html>

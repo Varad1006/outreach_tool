@@ -1,0 +1,86 @@
+{% extends "base.html" %}{% block title %}{{ lead.company }} · Outreach Agent{% endblock %}{% block content %}
+<div class="row" style="justify-content:space-between;margin-bottom:12px">
+  <div><a href="{{ url_for('dashboard') }}">← All leads</a></div>
+  <div class="row small">{% if nav.prev %}<a href="{{ url_for('lead_page', lead_id=nav.prev) }}">‹ Prev</a>{% endif %}
+    {% if nav.next %}<a href="{{ url_for('lead_page', lead_id=nav.next) }}">Next ›</a>{% endif %}</div>
+</div>
+<div class="grid g2">
+<div>
+  <div class="card">
+    <h2>{{ lead.company }} {% if lead.priority %}<span class="chip p-{{ lead.priority[0] }}">{{ lead.priority }} · {{ lead.score|int }}</span>{% endif %}</h2>
+    <div class="kv">
+      <div>Decision-maker</div><div><b>{{ lead.contact_name or '—' }}</b> {{ lead.title }}</div>
+      <div>Email</div><div>{{ lead.email or '—' }} <span class="muted small">{{ lead.email_type }}</span></div>
+      {% if lead.other_emails %}<div>Other emails</div><div class="small">{{ lead.other_emails }}</div>{% endif %}
+      {% if lead.phone %}<div>Phone</div><div>{{ lead.phone }}</div>{% endif %}
+      {% if lead.website %}<div>Website</div><div><a href="{{ lead.website }}" target="_blank" rel="noopener">{{ lead.website }}</a></div>{% endif %}
+      {% if lead.linkedin %}<div>LinkedIn</div><div><a href="{{ lead.linkedin }}" target="_blank" rel="noopener">profile</a></div>{% endif %}
+      {% if lead.raw.get('Company LinkedIn') or lead.raw.get('Firm LinkedIn') %}<div>Company LinkedIn</div><div><a href="{{ lead.raw.get('Company LinkedIn') or lead.raw.get('Firm LinkedIn') }}" target="_blank" rel="noopener">page</a></div>{% endif %}
+      <div>Location</div><div>{{ lead.country }} {{ lead.city }}</div>
+      {% if lead.practice_area %}<div>Area</div><div>{{ lead.practice_area }}</div>{% endif %}
+      <div>Source</div><div class="small">{{ lead.sheet_name }}{% if lead.row_num %}, row {{ lead.row_num }}{% endif %}</div>
+    </div>
+    {% if lead.check_note %}<p class="warn small">⚠ Check before sending: {{ lead.check_note }}</p>{% endif %}
+  </div>
+  <div class="card"><h3>Why they need AI</h3><div class="pre small">{{ lead.evidence or '—' }}</div></div>
+  <div class="card"><h3>How you can help</h3><div class="pre small">{{ lead.solution or '—' }}</div>
+    {% if lead.services %}<p class="small"><b>Services to pitch:</b> {{ lead.services }}</p>{% endif %}</div>
+  {% if lead.raw.get('Research report') %}<div class="card"><details><summary>Full AI research report</summary><div class="pre small">{{ lead.raw['Research report'] }}</div></details></div>{% endif %}
+  <div class="card"><h3>Pipeline</h3>
+    <form method="post" action="{{ url_for('lead_update', lead_id=lead.id) }}">
+      <label>Status</label><select name="status">{% for st in STATUSES %}<option {{ 'selected' if lead.status==st }}>{{ st }}</option>{% endfor %}</select>
+      <label>Send-to email</label><input type="email" name="email" value="{{ lead.email }}">
+      <label>Notes</label><textarea name="notes" style="min-height:70px">{{ lead.notes }}</textarea>
+      <label><input type="checkbox" name="unsubscribed" {{ 'checked' if lead.unsubscribed }}> Opted out (never email again)</label>
+      <button>Save</button>
+    </form>
+  </div>
+</div>
+
+<div>
+  <div class="card">
+    <div class="steps">{% for i in [0,1,2] %}{% set sent = emails|selectattr('step','equalto',i)|selectattr('state','equalto','sent')|list %}
+      <a href="{{ url_for('lead_page', lead_id=lead.id, step=i) }}" class="{{ 'cur' if step==i }} {{ 'done' if sent }}">{{ STEP_NAMES[i] }}{% if sent %} ✓{% endif %}</a>{% endfor %}</div>
+    {% if step > 2 %}<p class="muted">The 3-email sequence is complete. Reply to them personally from your inbox.</p>
+    {% else %}
+    {% if block %}<p class="warn small">Sending is blocked for this step: {{ block }}.</p>{% endif %}
+    <form method="post" action="{{ url_for('lead_compose', lead_id=lead.id) }}" id="compose">
+      <input type="hidden" name="step" value="{{ step }}"><input type="hidden" name="email_id" value="{{ draft.id or '' }}">
+      <input type="hidden" name="source" value="{{ draft.source }}">
+      <label>To</label><div>{{ lead.email }}</div>
+      <label>Subject</label><input type="text" name="subject" value="{{ draft.subject }}">
+      <label>Body <span class="muted">({{ draft.source }}{% if draft.state=='failed' %}, <span class="bad">last send failed: {{ draft.error }}</span>{% endif %})</span></label>
+      <textarea name="body" class="body">{{ draft.body }}</textarea>
+      <div class="small muted pre" style="margin-top:6px;border-left:3px solid var(--line);padding-left:8px">{{ preview_footer }}</div>
+      <label>Instructions for AI (optional)</label>
+      <input type="text" name="instructions" placeholder="e.g. shorter, mention Arabic support, more casual, focus on after-hours leads">
+      <div class="row" style="margin-top:12px">
+        <button name="action" value="ai" onclick="this.textContent='✨ Writing…'">✨ Write with AI</button>
+        <button name="action" value="sheet">Use sheet draft</button>
+        <button name="action" value="save">Save draft</button>
+        <span style="flex:1"></span>
+        {% if draft.id %}<button name="action" value="discard" class="danger">Discard</button>{% endif %}
+        <button name="action" value="queue" {{ 'disabled' if block }}>Add to queue</button>
+        <button name="action" value="send" class="primary" {{ 'disabled' if block }} onclick="return confirm('Send this email to {{ lead.email }} now?')">Send now</button>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+
+  <div class="card"><h3>Emails</h3>
+    {% for e in emails %}
+      <details {{ 'open' if loop.last and e.state=='sent' }}><summary><b>{{ STEP_NAMES[e.step] }}</b> · {{ e.state }}
+        {% if e.sent_at %}· {{ e.sent_at[:16]|replace('T',' ') }} UTC{% endif %}
+        {% if e.open_count %}· <span class="ok">opened {{ e.open_count }}×</span>{% endif %}
+        {% if e.state=='queued' %}<form method="post" action="{{ url_for('email_cancel', email_id=e.id) }}" style="display:inline"><button class="small">Unqueue</button></form>{% endif %}
+      </summary>
+      <div class="small"><b>{{ e.subject }}</b></div><div class="pre small">{{ e.body }}</div></details>
+    {% else %}<p class="muted small">Nothing yet.</p>{% endfor %}
+  </div>
+  <div class="card"><h3>Activity</h3><ul class="timeline">
+    {% for ev in events %}<li><span class="muted">{{ ev.at[:16]|replace('T',' ') }}</span> ·
+      <b class="{{ 'ok' if ev.kind=='reply' else 'bad' if ev.kind in ('bounce','error','unsubscribe') else '' }}">{{ ev.kind|replace('_',' ') }}</b> {{ ev.detail }}</li>
+    {% else %}<li class="muted">No activity yet.</li>{% endfor %}</ul></div>
+</div>
+</div>
+{% endblock %}

@@ -1,0 +1,72 @@
+{% extends "base.html" %}{% block content %}
+<div class="stats">
+  <div class="stat"><b>{{ stats.leads }}</b><span>Leads</span></div>
+  <div class="stat"><b>{{ stats.contacted }}</b><span>Contacted</span></div>
+  <div class="stat"><b>{{ stats.sent }}</b><span>Emails sent ({{ stats.today }} today / {{ s.daily_limit }})</span></div>
+  <div class="stat"><b>{{ stats.opened }}</b><span>Opened{% if s.track_opens != '1' %} (tracking off){% endif %}</span></div>
+  <div class="stat"><b class="ok">{{ stats.replied }}</b><span>Replied / in talks</span></div>
+  <div class="stat"><b class="bad">{{ stats.bounced }}</b><span>Bounced</span></div>
+  <div class="stat"><a href="{{ url_for('dashboard', view='drafts') }}"><b>{{ stats.drafts }}</b></a><span>Drafts to review</span></div>
+  <div class="stat"><a href="{{ url_for('queue_page') }}"><b>{{ stats.queued }}</b></a><span>Queued{% if paused %} <b class="warn">(paused)</b>{% endif %}</span></div>
+</div>
+
+{% if not stats.leads %}
+<div class="card"><h2>Start here</h2><p>Import your lead workbook (the .xlsx file or your Google Sheet link) on the <a href="{{ url_for('import_page') }}">Import</a> page.</p></div>
+{% endif %}
+
+{% if due and f.view != 'due' %}
+<div class="card"><h3>⏰ {{ due|length }} follow-up(s) due</h3>
+  <div class="small">{% for d in due[:12] %}<a href="{{ url_for('lead_page', lead_id=d.id) }}">{{ d.company }}</a> <span class="muted">({{ STEP_NAMES[d.due_step] }})</span>{% if not loop.last %} · {% endif %}{% endfor %}
+  {% if due|length > 12 %} · <a href="{{ url_for('dashboard', view='due') }}">all {{ due|length }} →</a>{% endif %}</div>
+</div>{% endif %}
+
+<div class="card">
+<form method="get" class="filters">
+  <div><label>Search</label><input type="text" name="q" value="{{ f.q }}" placeholder="Company, name, email, city"></div>
+  <div><label>Segment</label><select name="seg"><option value="">All</option>
+    {% for v,l in [('dubai','Dubai real estate'),('law','Law firms'),('other','Researched / other')] %}<option value="{{ v }}" {{ 'selected' if f.seg==v }}>{{ l }}</option>{% endfor %}</select></div>
+  <div><label>Priority</label><select name="pri"><option value="">All</option>
+    {% for p in ['A','B','C'] %}<option {{ 'selected' if f.pri==p }}>{{ p }}</option>{% endfor %}</select></div>
+  <div><label>Status</label><select name="status"><option value="">All</option>
+    {% for st in STATUSES %}<option {{ 'selected' if f.status==st }}>{{ st }}</option>{% endfor %}</select></div>
+  <div><label>Show</label><select name="view"><option value="">All leads</option>
+    {% for v,l in [('drafts','Has a draft'),('queued','Queued'),('due','Follow-up due'),('opened','Opened')] %}<option value="{{ v }}" {{ 'selected' if f.view==v }}>{{ l }}</option>{% endfor %}</select></div>
+  <div><button class="primary">Filter</button></div>
+</form>
+</div>
+
+<form method="post" action="{{ url_for('bulk') }}" class="card">
+<div class="tablewrap"><table>
+<thead><tr><th><input type="checkbox" onclick="document.querySelectorAll('.pick').forEach(c=>c.checked=this.checked)"></th>
+<th>Pri</th><th>Score</th><th>Company</th><th>Contact</th><th>Email</th><th>Where</th><th>Status</th><th>Activity</th></tr></thead>
+<tbody>
+{% for l in leads %}
+<tr>
+  <td><input type="checkbox" class="pick" name="ids" value="{{ l.id }}"></td>
+  <td>{% if l.priority %}<span class="chip p-{{ l.priority[0] }}">{{ l.priority[0] }}</span>{% endif %}</td>
+  <td>{{ l.score|int if l.score is not none }}</td>
+  <td><a href="{{ url_for('lead_page', lead_id=l.id) }}"><b>{{ l.company }}</b></a>
+      {% if l.check_note %}<span title="{{ l.check_note }}" class="warn">⚠</span>{% endif %}</td>
+  <td>{{ l.contact_name }}<div class="muted small">{{ l.title }}</div></td>
+  <td class="small">{{ l.email }}{% if l.unsubscribed %} <span class="bad">opted out</span>{% endif %}</td>
+  <td class="small">{{ l.country or ('UAE' if l.segment=='dubai') }}<div class="muted">{{ l.practice_area }}</div></td>
+  <td class="small s-{{ l.status|replace(' ','.') }}">{{ l.status }}</td>
+  <td class="small">
+    {% if l.n_sent %}{{ l.n_sent }} sent · {{ l.last_sent|ago }}{% endif %}
+    {% if l.opens %}<div class="ok">👁 {{ l.opens }}</div>{% endif %}
+    {% if l.pending %}<div class="muted">{{ l.pending|replace(',', ', ') }}</div>{% endif %}
+  </td>
+</tr>
+{% else %}<tr><td colspan="9" class="muted">No leads match.</td></tr>{% endfor %}
+</tbody></table></div>
+<div class="bulkbar">
+  <b class="small">With selected:</b>
+  <button name="action" value="draft_sheet" title="Uses the email already written in your sheet">Draft from sheet</button>
+  <button name="action" value="draft_ai" title="Claude writes a fresh personalised email for each lead">✨ Draft with AI</button>
+  <button name="action" value="queue" class="primary" title="Queues the next draft for each lead">Queue drafts to send</button>
+  <select name="set_status" onchange="if(this.value)this.form.submit()" style="width:auto">
+    <option value="">Set status…</option>{% for st in STATUSES %}<option>{{ st }}</option>{% endfor %}</select>
+  <span class="muted small">{{ leads|length }} shown</span>
+</div>
+</form>
+{% endblock %}

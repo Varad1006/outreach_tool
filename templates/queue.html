@@ -1,0 +1,22 @@
+{% extends "base.html" %}{% block content %}
+<div class="card">
+  <div class="row" style="justify-content:space-between">
+    <h2 style="margin:0">Send queue</h2>
+    <form method="post" action="{{ url_for('queue_toggle') }}"><button class="{{ 'primary' if paused }}">{{ '▶ Resume sending' if paused else '⏸ Pause sending' }}</button></form>
+  </div>
+  <p class="small muted">Sent today: {{ today }} / {{ s.daily_limit }} ·
+    gap {{ s.gap_min_seconds }}–{{ s.gap_max_seconds }}s between emails
+    {% if paused %}· <b class="warn">paused</b>{% elif wait %}· next send in ~{{ wait }}s{% endif %}
+    {% if sender.last_error %}· <span class="bad">last error: {{ sender.last_error }}</span>{% endif %}</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>State</th><th>Company</th><th>Step</th><th>To</th><th>Subject</th><th>When</th><th></th></tr></thead>
+    <tbody>{% for r in rows %}<tr>
+      <td class="{{ 'ok' if r.state=='sent' else 'bad' if r.state=='failed' else '' }}">{{ r.state }}</td>
+      <td><a href="{{ url_for('lead_page', lead_id=r.lead_id) }}">{{ r.company }}</a></td>
+      <td class="small">{{ STEP_NAMES[r.step] }}</td><td class="small">{{ r.to_email }}</td><td class="small">{{ r.subject }}</td>
+      <td class="small">{{ (r.sent_at or r.queued_at or '')[:16]|replace('T',' ') }}{% if r.error %}<div class="bad">{{ r.error }}</div>{% endif %}</td>
+      <td>{% if r.state in ('queued','failed') %}<form method="post" action="{{ url_for('email_cancel', email_id=r.id) }}"><button class="small">Back to drafts</button></form>{% endif %}</td>
+    </tr>{% else %}<tr><td colspan="7" class="muted">Queue is empty.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</div>
+{% endblock %}

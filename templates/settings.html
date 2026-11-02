@@ -1,0 +1,43 @@
+{% extends "base.html" %}{% block content %}
+<div class="grid g2">
+<form method="post" class="card">
+  <h2>You &amp; your emails</h2>
+  <label>Sender name</label><input type="text" name="sender_name" value="{{ s.sender_name }}">
+  <label>Signature (added to every email)</label><textarea name="signature" style="min-height:60px">{{ s.signature }}</textarea>
+  <label>Postal address (required by Canada's CASL; recommended for UK)</label><input type="text" name="postal_address" value="{{ s.postal_address }}">
+  <label>Opt-out line</label><input type="text" name="opt_out_line" value="{{ s.opt_out_line }}">
+  <label>About you &amp; your services (the AI uses this when writing and researching)</label>
+  <textarea name="about_me" style="min-height:160px">{{ s.about_me }}</textarea>
+  <h2 style="margin-top:20px">Sending</h2>
+  <div class="row">
+    <div style="flex:1"><label>Daily limit</label><input type="number" name="daily_limit" value="{{ s.daily_limit }}" min="1"></div>
+    <div style="flex:1"><label>Min gap (s)</label><input type="number" name="gap_min_seconds" value="{{ s.gap_min_seconds }}" min="10"></div>
+    <div style="flex:1"><label>Max gap (s)</label><input type="number" name="gap_max_seconds" value="{{ s.gap_max_seconds }}" min="10"></div>
+  </div>
+  <div class="row">
+    <div style="flex:1"><label>Follow-up 1 after (days)</label><input type="number" name="followup1_days" value="{{ s.followup1_days }}" min="1"></div>
+    <div style="flex:1"><label>Follow-up 2 after FU1 (days)</label><input type="number" name="followup2_days" value="{{ s.followup2_days }}" min="1"></div>
+  </div>
+  <h2 style="margin-top:20px">Open tracking</h2>
+  <label>Public URL of this app (needed for open tracking &amp; one-click unsubscribe)</label>
+  <input type="url" name="public_url" value="{{ s.public_url }}" placeholder="https://outreach.varad-tech.site">
+  <label><input type="checkbox" name="track_opens" {{ 'checked' if s.track_opens=='1' }}> Add an open-tracking pixel</label>
+  <p class="small muted">Opens are approximate (Apple Mail pre-loads images; some clients block them) and pixels can hurt deliverability on cold email. Replies are the number that matters.</p>
+  <button class="primary">Save settings</button>
+</form>
+<div>
+  <div class="card"><h2>Connections</h2>
+    <div class="kv">
+      <div>Claude API</div><div>{{ '✅ ' ~ model if ai_ok else '❌ set ANTHROPIC_API_KEY' }}</div>
+      <div>Sending (SMTP)</div><div>{{ '✅ ' ~ smtp_host ~ ' as ' ~ from_email if smtp_ok else '❌ set SMTP_* in .env' }}</div>
+      <div>Replies (IMAP)</div><div>{{ '✅ ' ~ imap_host if imap_ok else '❌ set IMAP_* in .env' }}</div>
+    </div>
+    <p class="small muted">Secrets live in the <code>.env</code> file, not here. Restart the app after editing it.</p>
+    <form method="post" action="{{ url_for('settings_test') }}" class="row">
+      <input type="email" name="to" placeholder="send a test to… (default: yourself)" style="flex:1">
+      <button>Send test email</button>
+    </form>
+  </div>
+</div>
+</div>
+{% endblock %}
