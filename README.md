@@ -33,7 +33,9 @@ The first run creates a `.env` file. Open it and fill in the following:
 | `SMTP_PASSWORD` | Google Workspace/Gmail: turn on 2-Step Verification, then create an **App Password** at https://myaccount.google.com/apppasswords. Use that 16-character password, not your normal one. |
 | `IMAP_HOST` | Leave as `imap.gmail.com` for Gmail/Workspace (turn on IMAP in Gmail settings → Forwarding and POP/IMAP) |
 
-Then run `./run.sh` again and open **http://127.0.0.1:5000**.
+Then run `./run.sh` again and open **http://127.0.0.1:5050**.
+
+> On a Mac, don't use port 5000: macOS AirPlay Receiver uses it and answers "Access to 127.0.0.1 was denied (403)". The app uses 5050 by default; set `PORT=` in `.env` to change it.
 
 The three dots in the top bar (AI / Send / Inbox) turn green when each connection is configured. Use **Settings → Send test email** to check that sending works.
 
@@ -82,7 +84,7 @@ Tips: get website lists from Google Maps, Property Finder or Bayut broker pages,
 
 Open tracking adds an invisible image to each email. The recipient's mail app has to load that image from your app, so the app must be reachable on the internet. Two ways to do that:
 
-- **Quick test:** run `cloudflared tunnel --url http://localhost:5000` and paste the https URL into Settings → Public URL.
+- **Quick test:** run `cloudflared tunnel --url http://localhost:5050` and paste the https URL into Settings → Public URL.
 - **Always on:** deploy to a small server (Render, Railway, a VPS) with `HOST=0.0.0.0`, set `APP_PASSWORD` so only you can log in, and use something like `https://outreach.varad-tech.site` as the public URL.
 
 Then tick **Add an open-tracking pixel** in Settings. Opens are only approximate: Apple Mail pre-loads images, many clients block them, and tracking pixels slightly hurt cold-email deliverability. **Replies are what count.** Reply tracking works without any of this.

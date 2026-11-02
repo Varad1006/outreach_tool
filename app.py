@@ -930,6 +930,6 @@ def unsubscribe(token):
 if __name__ == "__main__":
     start_workers()
     host = os.environ.get("HOST", "127.0.0.1")
-    port = int(os.environ.get("PORT", "5000"))
+    port = int(os.environ.get("PORT", "5050"))  # 5000 is taken by AirPlay Receiver on macOS
     print(f"\n  AI Outreach Agent running at http://{host}:{port}\n")
     app.run(host=host, port=port, debug=False, use_reloader=False, threaded=True)
