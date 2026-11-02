@@ -110,17 +110,60 @@ def send_email(em, lead, settings):
     msg.set_content(full_body)
     msg.add_alternative(_html(full_body, pixel), subtype="html")
 
-    context = ssl.create_default_context()
-    if c["smtp_port"] == 465:
-        with smtplib.SMTP_SSL(c["smtp_host"], 465, context=context, timeout=60) as s:
-            s.login(c["smtp_user"], c["smtp_password"])
-            s.send_message(msg)
-    else:
-        with smtplib.SMTP(c["smtp_host"], c["smtp_port"], timeout=60) as s:
-            s.starttls(context=context)
-            s.login(c["smtp_user"], c["smtp_password"])
-            s.send_message(msg)
+    _smtp_deliver(c, msg)
     return msg["Message-ID"]
+
+
+def _smtp_hint(host):
+    h = host.lower()
+    if "gmail" in h or "google" in h:
+        return ("Gmail / Google Workspace needs an App Password (Google Account → Security → 2-Step Verification → "
+                "App passwords), not your normal password.")
+    if "zoho" in h:
+        return "Zoho accounts in India use smtp.zoho.in (EU: smtp.zoho.eu); smtppro.zoho.in for paid org mailboxes."
+    if "office365" in h or "outlook" in h:
+        return "Microsoft 365 needs 'Authenticated SMTP' enabled for the mailbox; personal Outlook.com accounts often block SMTP."
+    if "titan" in h or "hostinger" in h or "secureserver" in h:
+        return "Hosting mailboxes usually want port 465 (SSL) and the full email address as SMTP_USER."
+    return "Check SMTP_HOST and SMTP_PORT with your email provider's SMTP settings page."
+
+
+def _smtp_deliver(c, msg):
+    """Send via SMTP. If the configured port can't be reached (reset / refused / TLS error) before anything was
+    sent, retry once on the other standard port: 587 (STARTTLS) <-> 465 (SSL)."""
+    host, port = c["smtp_host"], c["smtp_port"]
+    attempts = [(port, port == 465)]
+    alt = (587, False) if port == 465 else (465, True)
+    attempts.append(alt)
+    context = ssl.create_default_context()
+    errors = []
+    for p, use_ssl in attempts:
+        sending = False
+        try:
+            if use_ssl:
+                s = smtplib.SMTP_SSL(host, p, context=context, timeout=30)
+            else:
+                s = smtplib.SMTP(host, p, timeout=30)
+            with s:
+                s.ehlo()
+                if not use_ssl:
+                    s.starttls(context=context)
+                    s.ehlo()
+                s.login(c["smtp_user"], c["smtp_password"])
+                sending = True
+                s.send_message(msg)
+            return p
+        except smtplib.SMTPAuthenticationError as e:
+            raise RuntimeError(f"{host} rejected the login for {c['smtp_user']} ({e.smtp_code}). {_smtp_hint(host)}") from e
+        except (smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused, smtplib.SMTPDataError) as e:
+            raise RuntimeError(f"{host} refused the message: {e}") from e
+        except (OSError, smtplib.SMTPException) as e:  # reset, refused, timeout, TLS errors, disconnects
+            if sending:  # the server may already have the message: don't risk sending it twice
+                raise RuntimeError(f"Connection dropped while sending via {host}:{p} ({e}). Check your Sent folder "
+                                   "before retrying.") from e
+            errors.append(f"port {p}{' SSL' if use_ssl else ' STARTTLS'}: {type(e).__name__}: {e}")
+    raise RuntimeError(f"Couldn't connect to {host} — " + "; ".join(errors) + ". " + _smtp_hint(host) +
+                       " A VPN, antivirus or office network that blocks outgoing mail ports can also cause this.")
 
 
 def send_test(to_addr, settings):
