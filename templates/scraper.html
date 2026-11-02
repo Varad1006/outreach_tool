@@ -1,0 +1,80 @@
+{% extends "base.html" %}{% from "_ui.html" import icon, status with context %}
+{% block title %}Lead Scraper · Outreach Agent{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Lead Scraper</h1><p>Crawls company websites and builds AI-ready leads in the same format as your lead sheet: contacts, published emails, chat / ads / booking detection, AI Need Score, pitch and emails.</p></div>
+</div>
+<div class="grid g-dash">
+<form method="post" class="card" id="newjob">
+  <div class="card-head"><h2>{{ icon('plus') }} New scrape</h2>
+    <div class="seg" role="tablist"><button type="button" class="active" data-mode="urls">{{ icon('globe') }} Paste websites</button><button type="button" data-mode="discover">{{ icon('sparkles') }} Find businesses with AI</button></div></div>
+  <input type="hidden" name="mode" value="urls" id="mode">
+  <div data-pane="urls">
+    <label class="field">Websites (one per line, or comma-separated)</label>
+    <textarea name="urls" style="min-height:150px" class="mono" placeholder="redrealestate.ae&#10;https://www.example-law.co.uk&#10;…"></textarea>
+    <div class="hint">Up to 500 per job. Use this with lists from Google Maps, directories or portals.</div>
+  </div>
+  <div data-pane="discover" class="hide">
+    <label class="field">Describe the businesses to find</label>
+    <input type="text" name="query" placeholder="e.g. mid-size real estate brokerages in Dubai Marina · immigration law firms in Manchester">
+    <div class="row"><div class="grow"><label class="field">How many</label><input type="number" name="count" value="15" min="1" max="50"></div></div>
+    <div class="hint">Claude searches the web for matching businesses (skipping chains, directories and anyone already in your leads), then the scraper crawls each one.{% if not ai_ok %} <span class="bad">Needs ANTHROPIC_API_KEY.</span>{% endif %}</div>
+  </div>
+  <div class="grid g2" style="gap:10px">
+    <div><label class="field">Job name (optional)</label><input type="text" name="name" placeholder="e.g. Dubai batch 3"></div>
+    <div><label class="field">Industry (guides the AI pitch)</label><select name="segment">
+      <option value="dubai">Real estate (Dubai)</option><option value="law">Law firm (UK / Canada)</option><option value="other" selected>Other / auto-detect</option></select></div>
+  </div>
+  <div class="grid g2" style="gap:0 20px;margin-top:8px">
+    <label class="switch"><input type="checkbox" name="use_ai" {{ 'checked' if ai_ok }}><div><b>AI enrichment</b><span>Claude finds the decision-maker and writes the evidence, pitch, opener and 3 emails</span></div></label>
+    <label class="switch"><input type="checkbox" name="deep"><div><b>Deep search for decision-maker</b><span>If the site names nobody, search LinkedIn and the web (slower, more tokens)</span></div></label>
+    <label class="switch"><input type="checkbox" name="exclude_ai" checked><div><b>Skip sites that already have an AI chatbot</b><span>Like the original list: they don't need you</span></div></label>
+    <label class="switch"><input type="checkbox" name="skip_known" checked><div><b>Skip companies already in my leads</b><span>Matched by website / email domain</span></div></label>
+    <label class="switch"><input type="checkbox" name="auto_add"><div><b>Add to leads automatically</b><span>Otherwise review results first, then add</span></div></label>
+    <label class="switch"><input type="checkbox" name="render_js"><div><b>Render JavaScript sites</b><span>Uses a headless browser for sites with little HTML (needs Playwright)</span></div></label>
+  </div>
+  <details style="margin-top:6px"><summary class="small muted">Advanced</summary>
+    <div class="row"><div class="grow"><label class="field">Max pages per site</label><input type="number" name="pages" value="6" min="1" max="15"></div></div>
+    <label class="switch"><input type="checkbox" name="ignore_robots"><div><b>Ignore robots.txt</b><span>Not recommended</span></div></label>
+  </details>
+  <div style="margin-top:16px"><button class="primary" data-busy="Starting…">{{ icon('radar') }} Start scraping</button></div>
+</form>
+
+<div>
+  <div class="card"><div class="card-head"><h2>{{ icon('check') }} What it collects</h2></div>
+    <ul class="list small">
+      <li>{{ icon('users') }} Decision-maker, title and other key contacts</li>
+      <li>{{ icon('mail') }} Published emails (incl. Cloudflare-protected), best address to use, email type</li>
+      <li>{{ icon('phone') }} Phone, WhatsApp, company &amp; personal LinkedIn</li>
+      <li>{{ icon('chat') }} 55+ chat / AI bot vendors, incl. via Google Tag Manager</li>
+      <li>{{ icon('target') }} Google / Meta / TikTok / Snap / LinkedIn ad pixels</li>
+      <li>{{ icon('clock') }} Online booking tools, CRM / practice software</li>
+      <li>{{ icon('globe') }} Site languages, 24/7 &amp; free-consultation claims, portals</li>
+      <li>{{ icon('sparkles') }} AI Need Score + evidence, pitch, opener, 3-email sequence</li>
+    </ul>
+    <p class="small muted" style="margin:8px 0 0">Polite by default: respects robots.txt, one request at a time per site. Only uses emails published on the site; never guesses addresses.</p>
+  </div>
+</div>
+</div>
+
+<div class="card flush">
+  <div class="card-head" style="padding:16px 18px 0"><h2>{{ icon('radar') }} Scrape jobs</h2></div>
+  {% if jobs %}<div class="tablewrap"><table>
+    <thead><tr><th>Job</th><th>Status</th><th style="width:220px">Progress</th><th>Leads found</th><th>Added</th><th>Started</th></tr></thead>
+    <tbody>{% for j in jobs %}
+      <tr class="clickable" data-href="{{ url_for('scrape_job_page', job_id=j.id) }}">
+        <td><a href="{{ url_for('scrape_job_page', job_id=j.id) }}"><b>{{ j.name }}</b></a><div class="tiny muted">{{ 'AI discovery' if j.mode == 'discover' else 'Website list' }} · {{ {'dubai': 'Real estate', 'law': 'Law', 'other': 'Other'}[j.segment] }}</div></td>
+        <td>{{ status(j.status) }}</td>
+        <td><div class="progress {{ 'striped' if j.status in ('running', 'discovering') }}"><i style="width:{{ (100 * j.done / (j.total or 1))|round }}%"></i></div><div class="tiny muted" style="margin-top:4px">{{ j.done }} / {{ j.total }} sites</div></td>
+        <td>{{ j.ok }}</td><td>{{ j.added }}</td><td class="small muted">{{ j.created_at|ago }}</td>
+      </tr>{% endfor %}</tbody></table></div>
+  {% else %}<div class="empty">{{ icon('radar') }}<div>No scrapes yet. Paste a few websites above to try it.</div></div>{% endif %}
+</div>
+{% endblock %}
+{% block scripts %}<script>
+document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-mode]').forEach(x => x.classList.toggle('active', x === b));
+  document.querySelectorAll('[data-pane]').forEach(p => p.classList.toggle('hide', p.dataset.pane !== b.dataset.mode));
+  document.getElementById('mode').value = b.dataset.mode; }));
+document.querySelectorAll('tr.clickable').forEach(tr => tr.addEventListener('click', e => { if (!e.target.closest('a')) location.href = tr.dataset.href; }));
+</script>{% endblock %}

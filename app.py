@@ -4,11 +4,14 @@ import json
 import os
 import queue
 import random
+import re
 import secrets
 import threading
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -21,6 +24,7 @@ import ai
 import db
 import importer
 import mailer
+import scraper
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", secrets.token_hex(16))
@@ -254,7 +258,7 @@ def ai_loop():
 
 
 def start_workers():
-    for fn in (sender_loop, ai_loop):
+    for fn in (sender_loop, ai_loop, scraper_loop):
         threading.Thread(target=fn, daemon=True).start()
 
 
@@ -262,7 +266,17 @@ def start_workers():
 
 @app.context_processor
 def inject_globals():
-    return {"STATUSES": db.STATUSES, "STEP_NAMES": db.STEP_NAMES, "JOBS": JOBS,
+    nav = {}
+    if request.endpoint and not request.endpoint.startswith(("track_open", "unsubscribe", "static")):
+        with db.tx() as conn:
+            nav = {
+                "leads": conn.execute("SELECT COUNT(*) FROM leads").fetchone()[0],
+                "drafts": conn.execute("SELECT COUNT(DISTINCT lead_id) FROM emails WHERE state IN ('draft','failed')").fetchone()[0],
+                "queued": conn.execute("SELECT COUNT(*) FROM emails WHERE state='queued'").fetchone()[0],
+                "jobs": conn.execute("SELECT COUNT(*) FROM scrape_jobs WHERE status IN ('pending','running','discovering')").fetchone()[0],
+                "due": len(due_followups(conn, db.get_settings())),
+            }
+    return {"STATUSES": db.STATUSES, "STEP_NAMES": db.STEP_NAMES, "JOBS": JOBS, "NAV": nav,
             "ai_ok": ai.configured(), "smtp_ok": mailer.smtp_configured(), "imap_ok": mailer.imap_configured()}
 
 
@@ -280,17 +294,52 @@ def ago(ts):
 @app.route("/")
 def dashboard():
     s = db.get_settings()
+    with db.tx() as conn:
+        one = lambda q, *a: conn.execute(q, a).fetchone()[0]  # noqa: E731
+        stats = {
+            "leads": one("SELECT COUNT(*) FROM leads"),
+            "hot": one("SELECT COUNT(*) FROM leads WHERE priority LIKE 'A%'"),
+            "contacted": one("SELECT COUNT(DISTINCT lead_id) FROM emails WHERE state='sent'"),
+            "sent": one("SELECT COUNT(*) FROM emails WHERE state='sent'"),
+            "opened": one("SELECT COUNT(DISTINCT lead_id) FROM emails WHERE open_count>0"),
+            "replied": one("SELECT COUNT(*) FROM leads WHERE status IN ('Replied','Call booked','Proposal sent','Won')"),
+            "bounced": one("SELECT COUNT(*) FROM leads WHERE status='Bounced'"),
+            "queued": one("SELECT COUNT(*) FROM emails WHERE state='queued'"),
+            "today": sent_today(conn),
+        }
+        funnel = [(st, one("SELECT COUNT(*) FROM leads WHERE status=?", st)) for st in db.STATUSES]
+        due = due_followups(conn, s)
+        hot = conn.execute("SELECT * FROM leads WHERE status='Not contacted' AND unsubscribed=0 AND email<>'' "
+                           "AND NOT EXISTS (SELECT 1 FROM emails e WHERE e.lead_id=leads.id AND e.state IN ('queued','sent')) "
+                           "ORDER BY score DESC LIMIT 8").fetchall()
+        activity = conn.execute("SELECT ev.*, l.company FROM events ev JOIN leads l ON l.id=ev.lead_id "
+                                "WHERE ev.kind IN ('reply','bounce','unsubscribe','open','auto_reply') "
+                                "ORDER BY ev.at DESC LIMIT 8").fetchall()
+        jobs = conn.execute("SELECT * FROM scrape_jobs ORDER BY id DESC LIMIT 3").fetchall()
+    stats["reply_rate"] = round(100 * stats["replied"] / stats["contacted"]) if stats["contacted"] else 0
+    hour = datetime.now().hour
+    greet = "Good morning" if hour < 12 else "Good afternoon" if hour < 18 else "Good evening"
+    return render_template("dashboard.html", stats=stats, funnel=funnel, due=due, hot=hot, activity=activity,
+                           jobs=jobs, s=s, greet=greet, paused=s.get("queue_paused") == "1",
+                           wait=max(0, int(SENDER_STATE["next_at"] - time.time())), sender=SENDER_STATE)
+
+
+@app.route("/leads")
+def leads_page():
+    s = db.get_settings()
     f = {k: request.args.get(k, "") for k in ("seg", "pri", "status", "q", "view")}
     where, args = ["1=1"], []
-    if f["seg"]:
-        where.append("l.segment=?"); args.append(f["seg"])
+    if f["seg"] == "scraped":
+        where.append("l.sheet_name='Scraped'")
+    elif f["seg"]:
+        where.append("l.segment=? AND l.sheet_name<>'Scraped'"); args.append(f["seg"])
     if f["pri"]:
         where.append("l.priority LIKE ?"); args.append(f["pri"] + "%")
     if f["status"]:
         where.append("l.status=?"); args.append(f["status"])
     if f["q"]:
-        where.append("(l.company LIKE ? OR l.contact_name LIKE ? OR l.email LIKE ? OR l.city LIKE ?)")
-        args += [f"%{f['q']}%"] * 4
+        where.append("(l.company LIKE ? OR l.contact_name LIKE ? OR l.email LIKE ? OR l.city LIKE ? OR l.practice_area LIKE ?)")
+        args += [f"%{f['q']}%"] * 5
     if f["view"] == "drafts":
         where.append("EXISTS (SELECT 1 FROM emails e WHERE e.lead_id=l.id AND e.state IN ('draft','failed'))")
     elif f["view"] == "queued":
@@ -305,23 +354,18 @@ def dashboard():
             "(SELECT MAX(sent_at) FROM emails e WHERE e.lead_id=l.id AND e.state='sent') AS last_sent, "
             "(SELECT GROUP_CONCAT(state) FROM emails e WHERE e.lead_id=l.id AND e.state IN ('draft','queued','failed')) AS pending "
             f"FROM leads l WHERE {' AND '.join(where)} ORDER BY l.score DESC, l.company", args).fetchall()
-        stats = {
-            "leads": conn.execute("SELECT COUNT(*) FROM leads").fetchone()[0],
-            "drafts": conn.execute("SELECT COUNT(*) FROM emails WHERE state IN ('draft','failed')").fetchone()[0],
-            "queued": conn.execute("SELECT COUNT(*) FROM emails WHERE state='queued'").fetchone()[0],
-            "sent": conn.execute("SELECT COUNT(*) FROM emails WHERE state='sent'").fetchone()[0],
-            "contacted": conn.execute("SELECT COUNT(DISTINCT lead_id) FROM emails WHERE state='sent'").fetchone()[0],
-            "opened": conn.execute("SELECT COUNT(DISTINCT lead_id) FROM emails WHERE open_count>0").fetchone()[0],
-            "replied": conn.execute("SELECT COUNT(*) FROM leads WHERE status IN ('Replied','Call booked','Proposal sent','Won')").fetchone()[0],
-            "bounced": conn.execute("SELECT COUNT(*) FROM leads WHERE status='Bounced'").fetchone()[0],
-            "today": sent_today(conn),
+        counts = {
+            "": conn.execute("SELECT COUNT(*) FROM leads").fetchone()[0],
+            "dubai": conn.execute("SELECT COUNT(*) FROM leads WHERE segment='dubai' AND sheet_name<>'Scraped'").fetchone()[0],
+            "law": conn.execute("SELECT COUNT(*) FROM leads WHERE segment='law' AND sheet_name<>'Scraped'").fetchone()[0],
+            "scraped": conn.execute("SELECT COUNT(*) FROM leads WHERE sheet_name='Scraped'").fetchone()[0],
         }
-        due = due_followups(conn, s)
+        due = due_followups(conn, s) if f["view"] == "due" else []
     if f["view"] == "due":
         due_ids = {d["id"] for d in due}
         leads = [l for l in leads if l["id"] in due_ids]
-    return render_template("dashboard.html", leads=leads, stats=stats, due=due, f=f, s=s,
-                           paused=s.get("queue_paused") == "1", sender=SENDER_STATE)
+    titles = {"drafts": "Drafts to review", "due": "Follow-ups due", "queued": "Queued", "opened": "Opened"}
+    return render_template("leads.html", leads=leads, f=f, counts=counts, s=s, title=titles.get(f["view"], "Leads"))
 
 
 @app.route("/lead/<int:lead_id>")
@@ -425,12 +469,12 @@ def bulk():
     action = request.form.get("action") or request.form.get("set_status")
     if not ids:
         flash("Select some leads first.", "error")
-        return redirect(request.referrer or url_for("dashboard"))
+        return redirect(request.referrer or url_for("leads_page"))
     done, skipped = 0, []
     if action in ("draft_sheet", "draft_ai"):
         if action == "draft_ai" and not ai.configured():
             flash("Add ANTHROPIC_API_KEY to .env to use AI drafting.", "error")
-            return redirect(request.referrer or url_for("dashboard"))
+            return redirect(request.referrer or url_for("leads_page"))
         with db.tx() as conn:
             for lid in ids:
                 lead = get_lead(conn, lid)
@@ -475,7 +519,7 @@ def bulk():
         flash(f"Set {done} lead(s) to '{action}'.")
     if skipped:
         flash("Skipped: " + "; ".join(skipped[:15]) + (" …" if len(skipped) > 15 else ""), "error")
-    return redirect(request.referrer or url_for("dashboard"))
+    return redirect(request.referrer or url_for("leads_page"))
 
 
 @app.post("/check-inbox")
@@ -486,7 +530,7 @@ def check_inbox():
               f"{c['bounces']} bounces, {c['unsubscribes']} opt-outs.")
     except Exception as e:  # noqa: BLE001
         flash(f"Inbox check failed: {e}", "error")
-    return redirect(request.referrer or url_for("dashboard"))
+    return redirect(request.referrer or url_for("leads_page"))
 
 
 @app.route("/queue")
@@ -537,47 +581,279 @@ def import_page():
             r = importer.import_workbook(dest)
             flash(f"Imported {', '.join(r['sheets']) or 'nothing'}: {r['added']} new, {r['updated']} updated, "
                   f"{r['skipped']} skipped (no email).")
-            return redirect(url_for("dashboard"))
+            return redirect(url_for("leads_page"))
         except Exception as e:  # noqa: BLE001
             flash(f"Import failed: {e}", "error")
     return render_template("import.html", s=db.get_settings())
 
 
-@app.route("/research", methods=["GET", "POST"])
+@app.route("/research")
 def research_page():
-    if request.method == "POST":
-        q = request.form.get("query", "").strip()
-        if not q:
-            flash("Enter a website or company name.", "error")
-        elif not ai.configured():
-            flash("Add ANTHROPIC_API_KEY to .env to use research.", "error")
-        else:
+    return redirect(url_for("scraper_page"))
+
+
+# ------------------------------------------------------------------ scraper agent
+
+def known_domains(conn):
+    out = set()
+    for r in conn.execute("SELECT website, email FROM leads").fetchall():
+        if r["website"]:
+            out.add(urlparse(r["website"] if "//" in r["website"] else "//" + r["website"]).netloc.lower().removeprefix("www."))
+        if r["email"] and "@" in r["email"]:
+            out.add(r["email"].split("@")[-1].lower())
+    out.discard("")
+    return out
+
+
+def add_scraped_lead(conn, row, segment):
+    """Insert one scraped row into leads. Returns the lead id, or None if it has no email."""
+    if not row.get("email"):
+        return None
+    raw = {"Chat / AI on website": row.get("chat"), "Ad tracking detected": row.get("ads"),
+           "Online booking": row.get("booking"), "Practice mgmt / CRM visible": row.get("crm"),
+           "Site languages": row.get("languages"), "WhatsApp (from site)": row.get("whatsapp"),
+           "Company LinkedIn": row.get("company_linkedin"), "Other key contacts": row.get("other_contacts"),
+           "DM source": row.get("dm_source"), "Email source": row.get("email_source"),
+           "Claims on site": row.get("claims"), "Listed on": row.get("portals"), "Pages crawled": row.get("pages")}
+    now = db.now_iso()
+    vals = dict(company=row["company"] or row["domain"], website=row["website"], contact_name=row["contact_name"],
+                first_name=importer._first_name(row["contact_name"]), title=row["title"], email=row["email"],
+                email_type=row["email_type"], other_emails=row["other_emails"], phone=row["phone"],
+                linkedin=row["linkedin"], country=row["country"], city=row["city"], practice_area=row["industry"],
+                score=row["score"], priority=row["priority"], evidence=row["evidence"], solution=row["solution"],
+                services=row["services"], opener=row["opener"], check_note=row["check_note"],
+                sheet_subject=row["subject"], sheet_email1=row["email1"] or row["opener"], sheet_fu1=row["fu1"],
+                sheet_fu2=row["fu2"], raw=json.dumps({k: v for k, v in raw.items() if v}, ensure_ascii=False))
+    existing = conn.execute("SELECT id FROM leads WHERE sheet_name='Scraped' AND company=? AND email=?",
+                            (vals["company"], vals["email"])).fetchone()
+    if existing:
+        conn.execute(f"UPDATE leads SET {', '.join(k + '=?' for k in vals)}, updated_at=? WHERE id=?",
+                     list(vals.values()) + [now, existing["id"]])
+        return existing["id"]
+    cur = conn.execute(
+        f"INSERT INTO leads (sheet_name, segment, status, created_at, updated_at, {', '.join(vals)}) "
+        f"VALUES ('Scraped', ?, 'Not contacted', ?, ?, {', '.join('?' for _ in vals)})",
+        [segment, now, now] + list(vals.values()))
+    return cur.lastrowid
+
+
+def _job_cancelled(job_id):
+    with db.tx() as conn:
+        return conn.execute("SELECT status FROM scrape_jobs WHERE id=?", (job_id,)).fetchone()["status"] == "cancelled"
+
+
+def run_scrape_job(job_id):
+    with db.tx() as conn:
+        job = dict(conn.execute("SELECT * FROM scrape_jobs WHERE id=?", (job_id,)).fetchone())
+    opts = json.loads(job["options"] or "{}")
+    settings = db.get_settings()
+    use_ai = opts.get("use_ai") and ai.configured()
+
+    if job["mode"] == "discover":
+        with db.tx() as conn:
+            conn.execute("UPDATE scrape_jobs SET status='discovering' WHERE id=?", (job_id,))
+            skip = known_domains(conn)
+        try:
+            found = ai.discover_companies(job["query"], int(opts.get("count", 15)), skip)
+        except Exception as e:  # noqa: BLE001
+            with db.tx() as conn:
+                conn.execute("UPDATE scrape_jobs SET status='failed', error=?, finished_at=? WHERE id=?",
+                             (str(e), db.now_iso(), job_id))
+            return
+        with db.tx() as conn:
+            for c in found:
+                conn.execute("INSERT INTO scrape_results (job_id, url, status, created_at) VALUES (?,?,'pending',?)",
+                             (job_id, c["website"], db.now_iso()))
+
+    with db.tx() as conn:
+        results = [dict(r) for r in conn.execute("SELECT * FROM scrape_results WHERE job_id=? AND status='pending'", (job_id,))]
+        conn.execute("UPDATE scrape_jobs SET status='running', total=(SELECT COUNT(*) FROM scrape_results WHERE job_id=?) "
+                     "WHERE id=?", (job_id, job_id))
+        skip = known_domains(conn) if opts.get("skip_known") else set()
+
+    seen = set()
+    seen_lock = threading.Lock()
+
+    def work(res):
+        if _job_cancelled(job_id):
+            return
+        status, reason, row, lead_id = "ok", "", None, None
+        try:
+            with db.tx() as conn:
+                conn.execute("UPDATE scrape_results SET status='running' WHERE id=?", (res["id"],))
+            facts = scraper.crawl(res["url"], int(opts.get("pages", 6)), not opts.get("ignore_robots"), opts.get("render_js"))
+            domain = facts.get("domain", "")
+            with seen_lock:
+                dup = domain in seen
+                seen.add(domain)
+            if facts["status"] != "ok":
+                status, reason = "failed", "; ".join(facts["errors"][:2])
+            elif dup or domain in skip:
+                status, reason = "skipped", "already in your leads" if domain in skip else "duplicate in this job"
+            elif facts.get("ai_chat") and opts.get("exclude_ai"):
+                status, reason = "skipped", f"already runs an AI chatbot ({', '.join(facts['ai_chat'])})"
+            else:
+                row = scraper.build_row(facts, use_ai, settings, job["segment"], opts.get("deep"))
+                if not row["email"]:
+                    reason = "no published email found"
+                if opts.get("auto_add") and row["email"]:
+                    with db.tx() as conn:
+                        lead_id = add_scraped_lead(conn, row, job["segment"])
+        except Exception as e:  # noqa: BLE001
+            status, reason = "failed", str(e)[:300]
+            domain = res.get("domain") or ""
+        with db.tx() as conn:
+            conn.execute("UPDATE scrape_results SET status=?, reason=?, domain=?, row=?, lead_id=? WHERE id=?",
+                         (status, reason, domain, json.dumps(row, ensure_ascii=False) if row else None, lead_id, res["id"]))
+            conn.execute("UPDATE scrape_jobs SET done=done+1 WHERE id=?", (job_id,))
+
+    with ThreadPoolExecutor(max_workers=int(opts.get("workers", 3))) as ex:
+        list(ex.map(work, results))
+    with db.tx() as conn:
+        conn.execute("UPDATE scrape_jobs SET status=CASE WHEN status='cancelled' THEN 'cancelled' ELSE 'done' END, "
+                     "finished_at=? WHERE id=?", (db.now_iso(), job_id))
+
+
+def scraper_loop():
+    with db.tx() as conn:  # jobs interrupted by a restart go back to pending
+        conn.execute("UPDATE scrape_results SET status='pending' WHERE status='running'")
+        conn.execute("UPDATE scrape_jobs SET status='pending' WHERE status IN ('running','discovering')")
+    while True:
+        time.sleep(3)
+        with db.tx() as conn:
+            job = conn.execute("SELECT id FROM scrape_jobs WHERE status='pending' ORDER BY id LIMIT 1").fetchone()
+        if job:
             try:
-                r = ai.research_lead(q, db.get_settings())
-                email_addr = r["email"] if "@" in r["email"] else ""
-                score = max(0, min(100, int(r["ai_need_score"] or 0)))
+                run_scrape_job(job["id"])
+            except Exception as e:  # noqa: BLE001
                 with db.tx() as conn:
-                    cur = conn.execute(
-                        "INSERT INTO leads (sheet_name, segment, company, website, contact_name, first_name, title, email, "
-                        "email_type, other_emails, phone, linkedin, country, city, practice_area, score, priority, evidence, "
-                        "solution, services, opener, check_note, sheet_subject, sheet_email1, raw, status, created_at, updated_at) "
-                        "VALUES ('Researched','other',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Not contacted',?,?) "
-                        "ON CONFLICT(sheet_name, company, email) DO UPDATE SET evidence=excluded.evidence, "
-                        "solution=excluded.solution, opener=excluded.opener, updated_at=excluded.updated_at",
-                        (r["company"] or q, r["website"], r["contact_name"], importer._first_name(r["contact_name"]),
-                         r["title"], email_addr, r["email_type"], r["other_emails"], r["phone"], r["linkedin"],
-                         r["country"], r["city"], r["industry"], score, importer._priority(score), r["evidence"],
-                         r["solution"], r["services"], r["opener"],
-                         (r["check_note"] + (f" Email source: {r['email_source']}" if r["email_source"] else "")).strip(),
-                         f"Quick idea for {r['company']}", r["opener"],
-                         json.dumps({"Research report": r["report"]}), db.now_iso(), db.now_iso()))
-                    lid = cur.lastrowid or conn.execute("SELECT id FROM leads WHERE sheet_name='Researched' AND company=? AND email=?",
-                                                        (r["company"] or q, email_addr)).fetchone()["id"]
-                flash("Research done. Check the facts before you send." + ("" if email_addr else " No published email was found."))
-                return redirect(url_for("lead_page", lead_id=lid))
-            except ai.AIError as e:
-                flash(str(e), "error")
-    return render_template("research.html")
+                    conn.execute("UPDATE scrape_jobs SET status='failed', error=? WHERE id=?", (str(e), job["id"]))
+
+
+@app.route("/scraper", methods=["GET", "POST"])
+def scraper_page():
+    if request.method == "POST":
+        mode = request.form.get("mode", "urls")
+        opts = {k: bool(request.form.get(k)) for k in ("use_ai", "deep", "exclude_ai", "skip_known", "auto_add",
+                                                        "render_js", "ignore_robots")}
+        opts.update(pages=max(1, min(15, int(request.form.get("pages") or 6))),
+                    count=max(1, min(50, int(request.form.get("count") or 15))))
+        segment = request.form.get("segment", "other")
+        if mode == "urls":
+            urls = []
+            for line in re.split(r"[\n,]+", request.form.get("urls", "")):
+                line = line.strip()
+                if line and "." in line and not line.startswith("#"):
+                    urls.append(line)
+            urls = list(dict.fromkeys(urls))[:500]
+            if not urls:
+                flash("Paste at least one website.", "error")
+                return redirect(url_for("scraper_page"))
+            name = request.form.get("name") or f"{len(urls)} website(s)"
+            query = ""
+        else:
+            query = request.form.get("query", "").strip()
+            if not query:
+                flash("Describe the businesses to find.", "error")
+                return redirect(url_for("scraper_page"))
+            if not ai.configured():
+                flash("Finding businesses needs Claude: add ANTHROPIC_API_KEY to .env. Or paste websites instead.", "error")
+                return redirect(url_for("scraper_page"))
+            name = request.form.get("name") or query
+            urls = []
+        if opts["use_ai"] and not ai.configured():
+            flash("AI enrichment is off because ANTHROPIC_API_KEY isn't set. Scraping will still collect contacts and signals.", "error")
+        with db.tx() as conn:
+            cur = conn.execute("INSERT INTO scrape_jobs (name, segment, mode, query, options, status, total, created_at) "
+                               "VALUES (?,?,?,?,?,'pending',?,?)",
+                               (name[:120], segment, mode, query, json.dumps(opts), len(urls), db.now_iso()))
+            jid = cur.lastrowid
+            for u in urls:
+                conn.execute("INSERT INTO scrape_results (job_id, url, status, created_at) VALUES (?,?,'pending',?)",
+                             (jid, u, db.now_iso()))
+        flash("Scraper started. Results appear below as each site finishes.")
+        return redirect(url_for("scrape_job_page", job_id=jid))
+    with db.tx() as conn:
+        jobs = conn.execute(
+            "SELECT j.*, (SELECT COUNT(*) FROM scrape_results r WHERE r.job_id=j.id AND r.status='ok') AS ok, "
+            "(SELECT COUNT(*) FROM scrape_results r WHERE r.job_id=j.id AND r.lead_id IS NOT NULL) AS added "
+            "FROM scrape_jobs j ORDER BY j.id DESC LIMIT 50").fetchall()
+    return render_template("scraper.html", jobs=jobs)
+
+
+@app.route("/scraper/<int:job_id>")
+def scrape_job_page(job_id):
+    with db.tx() as conn:
+        job = conn.execute("SELECT * FROM scrape_jobs WHERE id=?", (job_id,)).fetchone()
+        if not job:
+            abort(404)
+        res = []
+        for r in conn.execute("SELECT * FROM scrape_results WHERE job_id=? ORDER BY "
+                              "CASE status WHEN 'ok' THEN 0 WHEN 'running' THEN 1 WHEN 'pending' THEN 2 ELSE 3 END, id",
+                              (job_id,)).fetchall():
+            d = dict(r)
+            d["row"] = json.loads(d["row"]) if d["row"] else None
+            res.append(d)
+    res.sort(key=lambda d: (d["status"] != "ok", -(d["row"] or {}).get("score", 0)))
+    return render_template("scrape_job.html", job=job, results=res, opts=json.loads(job["options"] or "{}"))
+
+
+@app.route("/scraper/<int:job_id>/status")
+def scrape_job_status(job_id):
+    with db.tx() as conn:
+        job = conn.execute("SELECT status, total, done FROM scrape_jobs WHERE id=?", (job_id,)).fetchone()
+    return jsonify(dict(job) if job else {})
+
+
+@app.post("/scraper/<int:job_id>/add")
+def scrape_job_add(job_id):
+    ids = request.form.getlist("rid")
+    added = skipped = 0
+    with db.tx() as conn:
+        job = conn.execute("SELECT segment FROM scrape_jobs WHERE id=?", (job_id,)).fetchone()
+        q = "SELECT * FROM scrape_results WHERE job_id=? AND status='ok' AND row IS NOT NULL"
+        rows = conn.execute(q, (job_id,)).fetchall()
+        for r in rows:
+            if ids and str(r["id"]) not in ids:
+                continue
+            lid = add_scraped_lead(conn, json.loads(r["row"]), job["segment"])
+            if lid:
+                conn.execute("UPDATE scrape_results SET lead_id=? WHERE id=?", (lid, r["id"]))
+                added += 1
+            else:
+                skipped += 1
+    flash(f"Added {added} lead(s) to your pipeline." + (f" {skipped} skipped (no email found)." if skipped else ""))
+    return redirect(url_for("scrape_job_page", job_id=job_id))
+
+
+@app.post("/scraper/<int:job_id>/cancel")
+def scrape_job_cancel(job_id):
+    with db.tx() as conn:
+        conn.execute("UPDATE scrape_jobs SET status='cancelled', finished_at=? WHERE id=? AND status IN ('pending','running','discovering')",
+                     (db.now_iso(), job_id))
+        conn.execute("UPDATE scrape_results SET status='skipped', reason='cancelled' WHERE job_id=? AND status='pending'", (job_id,))
+    flash("Scrape stopped.")
+    return redirect(url_for("scrape_job_page", job_id=job_id))
+
+
+@app.post("/scraper/<int:job_id>/delete")
+def scrape_job_delete(job_id):
+    with db.tx() as conn:
+        conn.execute("DELETE FROM scrape_jobs WHERE id=? AND status NOT IN ('running','discovering')", (job_id,))
+    flash("Scrape job deleted (leads you added stay in your pipeline).")
+    return redirect(url_for("scraper_page"))
+
+
+@app.route("/scraper/<int:job_id>/export")
+def scrape_job_export(job_id):
+    with db.tx() as conn:
+        job = conn.execute("SELECT name FROM scrape_jobs WHERE id=?", (job_id,)).fetchone()
+        rows = [json.loads(r["row"]) for r in conn.execute(
+            "SELECT row FROM scrape_results WHERE job_id=? AND status='ok' AND row IS NOT NULL", (job_id,))]
+    dest = os.path.join(db.DATA_DIR, f"scrape_{job_id}.xlsx")
+    scraper.export_xlsx(rows, dest)
+    safe = re.sub(r"[^A-Za-z0-9]+", "_", job["name"] or "scrape").strip("_")[:40]
+    return send_file(dest, as_attachment=True, download_name=f"scraped_{safe}.xlsx")
 
 
 @app.route("/settings", methods=["GET", "POST"])

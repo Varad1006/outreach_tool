@@ -1,14 +1,19 @@
-{% extends "base.html" %}{% block content %}
-<div class="card" style="max-width:760px">
-  <h2>Import leads</h2>
-  <p class="small muted">Reads the <b>Dubai Real Estate</b> and <b>Law Firms</b> tabs (and any other tab with Company + Email columns).
-  Re-importing updates lead details but keeps your statuses, notes and email history.</p>
-  <form method="post" enctype="multipart/form-data">
-    <label>Upload .xlsx</label><input type="file" name="file" accept=".xlsx">
-    <p class="muted small" style="text-align:center">— or —</p>
-    <label>Google Sheets link (sharing must be "Anyone with the link can view")</label>
-    <input type="url" name="sheet_url" value="{{ s.get('sheet_url','') }}" placeholder="https://docs.google.com/spreadsheets/d/…">
-    <div style="margin-top:12px"><button class="primary">Import</button></div>
+{% extends "base.html" %}{% from "_ui.html" import icon with context %}
+{% block title %}Import · Outreach Agent{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>Import leads</h1><p>Reads the Dubai Real Estate and Law Firms tabs, plus any tab with Company + Email columns (including files the scraper exports).</p></div></div>
+<div class="grid g2">
+  <form method="post" enctype="multipart/form-data" class="card">
+    <div class="card-head"><h2>{{ icon('upload') }} Upload a spreadsheet</h2></div>
+    <input type="file" name="file" accept=".xlsx">
+    <div style="margin-top:14px"><button class="primary" data-busy="Importing…">{{ icon('upload') }} Import file</button></div>
+  </form>
+  <form method="post" class="card">
+    <div class="card-head"><h2>{{ icon('globe') }} Google Sheets link</h2></div>
+    <input type="url" name="sheet_url" value="{{ s.get('sheet_url', '') }}" placeholder="https://docs.google.com/spreadsheets/d/…">
+    <div class="hint">Sharing must be "Anyone with the link can view". Re-import any time to pull updates.</div>
+    <div style="margin-top:14px"><button class="primary" data-busy="Importing…">{{ icon('refresh') }} Import from Google Sheets</button></div>
   </form>
 </div>
+<div class="callout info">{{ icon('check') }}<div>Re-importing updates lead details but keeps your statuses, notes and email history.</div></div>
 {% endblock %}

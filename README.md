@@ -8,7 +8,7 @@ A personal tool for running cold email outreach from your lead sheet. With it yo
 4. **Send**: send one email now, or queue many. The queue respects a daily limit and spaces emails out to protect deliverability.
 5. **Track** emails: sent, opened (optional), replied, auto-replies, bounces and opt-outs. Replies are found by scanning your inbox.
 6. **Follow up**: a 3-step sequence (first email, follow-up 1 on day 3, follow-up 2 about 5 days later) sent **in the same thread**. A lead that replies is taken out of the sequence automatically.
-7. **Research new leads**: give it a website or company name. Claude searches the web, finds the decision-maker and their *published* email, and writes up how AI could help them.
+7. **Lead Scraper agent**: builds new leads in the same format as your Excel. Paste a list of websites, or describe the businesses you want (e.g. "immigration law firms in Manchester") and Claude finds them. See section 3.
 8. **Export** your pipeline back into your original workbook, with the `Outreach status` and `Notes` columns filled in.
 
 Nothing is sent without you clicking **Send now** or **Queue**.
@@ -49,7 +49,36 @@ The three dots in the top bar (AI / Send / Inbox) turn green when each connectio
 8. When a call is booked or a proposal is sent, update the status on the lead page.
 9. Use **Export .xlsx** whenever you want your sheet updated.
 
-## 3. Open tracking (optional)
+## 3. Lead Scraper agent
+
+Open **Lead Scraper** in the sidebar. For each website it:
+
+1. **Crawls** the home page plus the most useful contact / about / team pages (6 by default), and the site's Google Tag Manager container. It respects robots.txt and fetches one page at a time per site.
+2. **Collects** the following:
+   - published emails, including Cloudflare-protected ones (it never guesses addresses)
+   - the best email to use and its type (direct / general inbox / other staff)
+   - phone, WhatsApp, and company and personal LinkedIn
+   - people listed with their titles
+   - 55+ chat and AI-bot vendors
+   - Google, Meta, TikTok, Snapchat, LinkedIn and Microsoft ad pixels
+   - booking tools and CRM / practice software
+   - site languages, "24/7", "free consultation" and "no win no fee" claims, and portal profiles
+3. **Scores** each lead with an AI Need Score (0–100) and lists the evidence, using the same idea as your sheet: no instant reply, paid ads, no booking, English-only, high volume…
+4. **With Claude** (AI enrichment on), it also identifies the decision-maker and writes "Why they need AI", "How you can help", a personalised opener, a subject line and the 3-email sequence. **Deep search** looks up the owner or CEO on LinkedIn and the web when the site names nobody.
+5. **Skips** sites that already run an AI chatbot and companies already in your leads (optional).
+
+Review the results, then click **Add to leads**, or download them as `.xlsx`. The download uses the same columns as your lead workbook and can be imported again.
+
+Command line (no web app needed):
+
+```bash
+.venv/bin/python scraper.py site1.com site2.ae --out leads.xlsx
+.venv/bin/python scraper.py --file urls.txt --ai --segment law --out law_leads.xlsx
+```
+
+Tips: get website lists from Google Maps, Property Finder or Bayut broker pages, or legal directories, or use "Find businesses with AI". JavaScript-only sites: `pip install playwright && playwright install chromium`, then turn on "Render JavaScript sites".
+
+## 4. Open tracking (optional)
 
 Open tracking adds an invisible image to each email. The recipient's mail app has to load that image from your app, so the app must be reachable on the internet. Two ways to do that:
 
@@ -58,7 +87,7 @@ Open tracking adds an invisible image to each email. The recipient's mail app ha
 
 Then tick **Add an open-tracking pixel** in Settings. Opens are only approximate: Apple Mail pre-loads images, many clients block them, and tracking pixels slightly hurt cold-email deliverability. **Replies are what count.** Reply tracking works without any of this.
 
-## 4. Deliverability and compliance
+## 5. Deliverability and compliance
 
 - Send from a **business domain** with SPF, DKIM and DMARC set up. Warm it up first: about 10/day in week 1, then 20–40/day.
 - Every email automatically gets your signature, your postal address (if set), an opt-out line and a `List-Unsubscribe` header.
@@ -71,7 +100,8 @@ Then tick **Add an open-tracking pixel** in Settings. Opens are only approximate
 
 ```
 app.py        web app, send queue, follow-up logic
-ai.py         Claude: email drafting + web research for new leads
+ai.py         Claude: email drafting, scraper enrichment, business discovery
+scraper.py    Lead Scraper agent: crawler, signal detection, scoring, .xlsx export (also a CLI)
 mailer.py     SMTP sending, IMAP reply/bounce/opt-out detection
 importer.py   xlsx / Google Sheets import, export back to xlsx
 db.py         SQLite storage (data/outreach.db)
@@ -79,4 +109,3 @@ templates/    pages
 ```
 
 Your data lives in `data/outreach.db`. Back it up if it matters to you.
-# outreach_tool

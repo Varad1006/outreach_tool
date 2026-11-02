@@ -1,0 +1,67 @@
+{% extends "base.html" %}{% from "_ui.html" import icon, status, score, prio, avatar with context %}
+{% block title %}{{ title }} · Outreach Agent{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>{{ title }}</h1><p>{{ leads|length }} shown{% if f.view == 'due' %} · select them and draft follow-ups in one go{% elif f.view == 'drafts' %} · review, then queue them to send{% endif %}</p></div>
+  <div class="actions">
+    <a class="btn" href="{{ url_for('import_page') }}">{{ icon('upload') }} Import</a>
+    <a class="btn" href="{{ url_for('scraper_page') }}">{{ icon('radar') }} Scrape more</a>
+  </div>
+</div>
+<div class="tabs">
+  {% for v, label in [('', 'All'), ('dubai', 'Dubai real estate'), ('law', 'Law firms'), ('scraped', 'Scraped')] %}
+  <a href="{{ url_for('leads_page', seg=v, view=f.view) }}" class="{{ 'active' if f.seg == v }}">{{ label }}<span class="n">{{ counts[v] }}</span></a>{% endfor %}
+</div>
+<form method="post" action="{{ url_for('bulk') }}" id="bulkform">
+<div class="card flush">
+  <div class="filters">
+    <div><label class="field" style="margin-top:0">Search</label><input type="search" name="q" value="{{ f.q }}" placeholder="Company, person, email, city, practice area" form="filterform"></div>
+    <div><label class="field" style="margin-top:0">Priority</label><select name="pri" form="filterform"><option value="">Any</option>
+      {% for p, l in [('A', 'A · Hot'), ('B', 'B · Warm'), ('C', 'C · Nurture')] %}<option value="{{ p }}" {{ 'selected' if f.pri == p }}>{{ l }}</option>{% endfor %}</select></div>
+    <div><label class="field" style="margin-top:0">Status</label><select name="status" form="filterform"><option value="">Any</option>
+      {% for st in STATUSES %}<option {{ 'selected' if f.status == st }}>{{ st }}</option>{% endfor %}</select></div>
+    <div><label class="field" style="margin-top:0">Show</label><select name="view" form="filterform"><option value="">All leads</option>
+      {% for v, l in [('drafts', 'Has a draft'), ('queued', 'Queued'), ('due', 'Follow-up due'), ('opened', 'Opened')] %}<option value="{{ v }}" {{ 'selected' if f.view == v }}>{{ l }}</option>{% endfor %}</select></div>
+    <div><button class="primary" form="filterform">{{ icon('search') }} Filter</button></div>
+  </div>
+  <div class="tablewrap"><table>
+    <thead><tr><th style="width:36px"><input type="checkbox" id="pickall" aria-label="Select all"></th>
+      <th>Company</th><th>Decision-maker</th><th>Score</th><th>Email</th><th>Status</th><th>Activity</th></tr></thead>
+    <tbody>
+    {% for l in leads %}
+    <tr class="clickable" data-href="{{ url_for('lead_page', lead_id=l.id) }}">
+      <td><input type="checkbox" class="pick" name="ids" value="{{ l.id }}" aria-label="Select {{ l.company }}"></td>
+      <td><div class="co">{{ avatar(l.company) }}<div style="min-width:0"><a href="{{ url_for('lead_page', lead_id=l.id) }}"><b>{{ l.company }}</b></a>
+        <div class="small muted">{{ l.practice_area or (l.country or ('Dubai, UAE' if l.segment == 'dubai')) }}{% if l.check_note %} <span class="warn" title="{{ l.check_note }}">{{ icon('alert') }}</span>{% endif %}</div></div></div></td>
+      <td><div>{{ l.contact_name or '—' }}</div><div class="small muted truncate" style="max-width:220px">{{ l.title }}</div></td>
+      <td><div class="row" style="flex-wrap:nowrap;gap:8px">{{ prio(l.priority) }}{{ score(l.score) }}</div></td>
+      <td class="small"><span class="{{ 'bad' if l.unsubscribed }}">{{ l.email or '—' }}</span>{% if l.unsubscribed %}<div class="bad tiny">opted out</div>{% elif 'General' in (l.email_type or '') %}<div class="muted tiny">general inbox</div>{% endif %}</td>
+      <td>{{ status(l.status) }}</td>
+      <td class="small nowrap">
+        {% if l.n_sent %}<div>{{ icon('mail') }} {{ l.n_sent }} · {{ l.last_sent|ago }}</div>{% endif %}
+        {% if l.opens %}<div class="ok">{{ icon('eye') }} {{ l.opens }} open{{ 's' if l.opens > 1 }}</div>{% endif %}
+        {% if l.pending %}<div class="muted">{{ l.pending|replace(',', ', ') }}</div>{% endif %}
+        {% if not (l.n_sent or l.opens or l.pending) %}<span class="muted">—</span>{% endif %}
+      </td>
+    </tr>
+    {% else %}<tr><td colspan="7"><div class="empty">{{ icon('users') }}<div>No leads match these filters.</div></div></td></tr>{% endfor %}
+    </tbody></table></div>
+</div>
+<div class="bulkbar" id="bulkbar">
+  <b><span id="nsel">0</span> selected</b>
+  <button name="action" value="draft_sheet" title="Use the email already written in your sheet">{{ icon('file') }} Draft from sheet</button>
+  <button name="action" value="draft_ai" title="Claude writes a fresh personalised email for each">{{ icon('sparkles') }} Draft with AI</button>
+  <button name="action" value="queue" class="primary" title="Queue each lead's next draft">{{ icon('send') }} Queue drafts</button>
+  <select name="set_status" onchange="if(this.value)this.form.submit()" style="width:auto"><option value="">Set status…</option>{% for st in STATUSES %}<option>{{ st }}</option>{% endfor %}</select>
+</div>
+</form>
+<form id="filterform" method="get"><input type="hidden" name="seg" value="{{ f.seg }}"></form>
+{% endblock %}
+{% block scripts %}<script>
+const picks = [...document.querySelectorAll('.pick')], bar = document.getElementById('bulkbar');
+const sync = () => { const n = picks.filter(p => p.checked).length; document.getElementById('nsel').textContent = n; bar.classList.toggle('show', n > 0); };
+picks.forEach(p => p.addEventListener('change', sync));
+document.getElementById('pickall').addEventListener('change', e => { picks.forEach(p => p.checked = e.target.checked); sync(); });
+document.querySelectorAll('tr.clickable').forEach(tr => tr.addEventListener('click', e => {
+  if (e.target.closest('input,a,button,select')) return; location.href = tr.dataset.href; }));
+</script>{% endblock %}

@@ -1,86 +1,122 @@
-{% extends "base.html" %}{% block title %}{{ lead.company }} · Outreach Agent{% endblock %}{% block content %}
-<div class="row" style="justify-content:space-between;margin-bottom:12px">
-  <div><a href="{{ url_for('dashboard') }}">← All leads</a></div>
-  <div class="row small">{% if nav.prev %}<a href="{{ url_for('lead_page', lead_id=nav.prev) }}">‹ Prev</a>{% endif %}
-    {% if nav.next %}<a href="{{ url_for('lead_page', lead_id=nav.next) }}">Next ›</a>{% endif %}</div>
+{% extends "base.html" %}{% from "_ui.html" import icon, status, score, prio, avatar with context %}
+{% block title %}{{ lead.company }} · Outreach Agent{% endblock %}
+{% block content %}
+{% set r = lead.raw %}
+<div class="row" style="justify-content:space-between;margin-bottom:14px">
+  <a href="{{ url_for('leads_page') }}" class="small">{{ icon('left') }} All leads</a>
+  <div class="row">{% if nav.prev %}<a class="btn sm" href="{{ url_for('lead_page', lead_id=nav.prev) }}">{{ icon('left') }} Prev</a>{% endif %}
+    {% if nav.next %}<a class="btn sm" href="{{ url_for('lead_page', lead_id=nav.next) }}">Next {{ icon('right') }}</a>{% endif %}</div>
 </div>
-<div class="grid g2">
-<div>
-  <div class="card">
-    <h2>{{ lead.company }} {% if lead.priority %}<span class="chip p-{{ lead.priority[0] }}">{{ lead.priority }} · {{ lead.score|int }}</span>{% endif %}</h2>
-    <div class="kv">
-      <div>Decision-maker</div><div><b>{{ lead.contact_name or '—' }}</b> {{ lead.title }}</div>
-      <div>Email</div><div>{{ lead.email or '—' }} <span class="muted small">{{ lead.email_type }}</span></div>
-      {% if lead.other_emails %}<div>Other emails</div><div class="small">{{ lead.other_emails }}</div>{% endif %}
-      {% if lead.phone %}<div>Phone</div><div>{{ lead.phone }}</div>{% endif %}
-      {% if lead.website %}<div>Website</div><div><a href="{{ lead.website }}" target="_blank" rel="noopener">{{ lead.website }}</a></div>{% endif %}
-      {% if lead.linkedin %}<div>LinkedIn</div><div><a href="{{ lead.linkedin }}" target="_blank" rel="noopener">profile</a></div>{% endif %}
-      {% if lead.raw.get('Company LinkedIn') or lead.raw.get('Firm LinkedIn') %}<div>Company LinkedIn</div><div><a href="{{ lead.raw.get('Company LinkedIn') or lead.raw.get('Firm LinkedIn') }}" target="_blank" rel="noopener">page</a></div>{% endif %}
-      <div>Location</div><div>{{ lead.country }} {{ lead.city }}</div>
-      {% if lead.practice_area %}<div>Area</div><div>{{ lead.practice_area }}</div>{% endif %}
-      <div>Source</div><div class="small">{{ lead.sheet_name }}{% if lead.row_num %}, row {{ lead.row_num }}{% endif %}</div>
+
+<div class="card">
+  <div class="row" style="gap:16px;align-items:center">
+    {{ avatar(lead.company, 'lg') }}
+    <div style="flex:1;min-width:220px">
+      <div class="row" style="gap:8px"><h1>{{ lead.company }}</h1>{{ status(lead.status) }}{% if lead.unsubscribed %}<span class="pill st-bounced">Opted out</span>{% endif %}</div>
+      <div class="muted" style="margin-top:2px">{{ lead.contact_name or 'Decision-maker unknown' }}{% if lead.title %} · {{ lead.title }}{% endif %}
+        {% if lead.practice_area %} · {{ lead.practice_area }}{% endif %}{% if lead.country %} · {{ lead.country }}{% endif %}</div>
+      <div class="actions" style="margin-top:10px">
+        {% if lead.website %}<a class="btn sm" href="{{ lead.website }}" target="_blank" rel="noopener">{{ icon('globe') }} Website</a>{% endif %}
+        {% if lead.linkedin %}<a class="btn sm" href="{{ lead.linkedin }}" target="_blank" rel="noopener">{{ icon('linkedin') }} {{ lead.first_name or 'Person' }}</a>{% endif %}
+        {% if r.get('Company LinkedIn') or r.get('Firm LinkedIn') %}<a class="btn sm" href="{{ r.get('Company LinkedIn') or r.get('Firm LinkedIn') }}" target="_blank" rel="noopener">{{ icon('linkedin') }} Company</a>{% endif %}
+        {% if lead.phone %}<a class="btn sm" href="tel:{{ lead.phone.split(',')[0]|replace(' ', '') }}">{{ icon('phone') }} {{ lead.phone.split(',')[0] }}</a>{% endif %}
+        {% if r.get('WhatsApp (from site)') %}<span class="btn sm">{{ icon('chat') }} WhatsApp {{ r.get('WhatsApp (from site)') }}</span>{% endif %}
+      </div>
     </div>
-    {% if lead.check_note %}<p class="warn small">⚠ Check before sending: {{ lead.check_note }}</p>{% endif %}
+    {% if lead.score is not none %}<div style="text-align:center"><div class="ring" style="--p:{{ lead.score|int }}"><span>{{ lead.score|int }}</span></div><div class="tiny muted" style="margin-top:4px">{{ lead.priority }}</div></div>{% endif %}
   </div>
-  <div class="card"><h3>Why they need AI</h3><div class="pre small">{{ lead.evidence or '—' }}</div></div>
-  <div class="card"><h3>How you can help</h3><div class="pre small">{{ lead.solution or '—' }}</div>
-    {% if lead.services %}<p class="small"><b>Services to pitch:</b> {{ lead.services }}</p>{% endif %}</div>
-  {% if lead.raw.get('Research report') %}<div class="card"><details><summary>Full AI research report</summary><div class="pre small">{{ lead.raw['Research report'] }}</div></details></div>{% endif %}
-  <div class="card"><h3>Pipeline</h3>
+  {% set sig = [('Chat / AI on website', 'Chat'), ('Ad tracking detected', 'Ads'), ('Online booking', 'Booking'), ('Site languages', 'Languages'), ('Median WhatsApp reply (PF)', 'WhatsApp reply'), ('Live listings (PF)', 'Listings'), ('Client reviews (ReviewSolicitors, UK)', 'Reviews'), ('Practice mgmt / CRM visible', 'Tools')] %}
+  <div class="chips" style="margin-top:14px">{% for k, label in sig %}{% if r.get(k) %}
+    {% set v = r.get(k) %}{% set gap = (k in ('Chat / AI on website', 'Online booking') and v in ('None', 'WhatsApp link only')) or (k == 'Site languages' and v in ('English only', 'English')) %}
+    <span class="chip {{ 'gap' if gap }}"><span class="muted">{{ label }}:</span> {{ v }}</span>{% endif %}{% endfor %}</div>
+</div>
+
+{% if lead.check_note %}<div class="callout">{{ icon('alert') }}<div><b>Check before sending:</b> {{ lead.check_note }}</div></div>{% endif %}
+
+<div class="grid g-lead">
+<div>
+  <div class="card"><div class="card-head"><h2>{{ icon('target') }} Why they need AI</h2></div><div class="bullets">{{ lead.evidence or '—' }}</div></div>
+  <div class="card"><div class="card-head"><h2>{{ icon('sparkles') }} How you can help</h2></div><div class="bullets">{{ lead.solution or '—' }}</div>
+    {% if lead.services %}<div class="chips" style="margin-top:12px">{% for sv in lead.services.split('+') %}<span class="chip good">{{ sv.strip() }}</span>{% endfor %}</div>{% endif %}</div>
+  <div class="card"><div class="card-head"><h2>{{ icon('users') }} Contact details</h2></div>
+    <dl class="kv">
+      <dt>Email</dt><dd>{{ lead.email or '—' }}<div class="tiny muted">{{ lead.email_type }}</div></dd>
+      {% if lead.other_emails %}<dt>Other emails</dt><dd class="small">{{ lead.other_emails }}</dd>{% endif %}
+      {% if r.get('Other key contacts') %}<dt>Other contacts</dt><dd class="small">{{ r.get('Other key contacts') }}</dd>{% endif %}
+      {% if lead.city %}<dt>Location</dt><dd class="small">{{ lead.city }}</dd>{% endif %}
+      {% if r.get('DM source') %}<dt>Name source</dt><dd class="small">{{ r.get('DM source') }}</dd>{% endif %}
+      {% if r.get('Email source') %}<dt>Email source</dt><dd class="small">{{ r.get('Email source') }}</dd>{% endif %}
+      <dt>Source</dt><dd class="small">{{ lead.sheet_name }}{% if lead.row_num %}, row {{ lead.row_num }}{% endif %}</dd>
+    </dl>
+  </div>
+  <div class="card"><div class="card-head"><h2>{{ icon('sliders') }} Pipeline</h2></div>
     <form method="post" action="{{ url_for('lead_update', lead_id=lead.id) }}">
-      <label>Status</label><select name="status">{% for st in STATUSES %}<option {{ 'selected' if lead.status==st }}>{{ st }}</option>{% endfor %}</select>
-      <label>Send-to email</label><input type="email" name="email" value="{{ lead.email }}">
-      <label>Notes</label><textarea name="notes" style="min-height:70px">{{ lead.notes }}</textarea>
-      <label><input type="checkbox" name="unsubscribed" {{ 'checked' if lead.unsubscribed }}> Opted out (never email again)</label>
-      <button>Save</button>
+      <div class="grid g2" style="gap:10px">
+        <div><label class="field">Status</label><select name="status">{% for st in STATUSES %}<option {{ 'selected' if lead.status == st }}>{{ st }}</option>{% endfor %}</select></div>
+        <div><label class="field">Send-to email</label><input type="email" name="email" value="{{ lead.email }}"></div>
+      </div>
+      <label class="field">Notes</label><textarea name="notes" style="min-height:70px" placeholder="Call notes, LinkedIn check, next steps…">{{ lead.notes }}</textarea>
+      <label class="switch"><input type="checkbox" name="unsubscribed" {{ 'checked' if lead.unsubscribed }}><div><b>Opted out</b><span>Never email this lead again</span></div></label>
+      <button>{{ icon('save') }} Save</button>
     </form>
   </div>
 </div>
 
 <div>
   <div class="card">
-    <div class="steps">{% for i in [0,1,2] %}{% set sent = emails|selectattr('step','equalto',i)|selectattr('state','equalto','sent')|list %}
-      <a href="{{ url_for('lead_page', lead_id=lead.id, step=i) }}" class="{{ 'cur' if step==i }} {{ 'done' if sent }}">{{ STEP_NAMES[i] }}{% if sent %} ✓{% endif %}</a>{% endfor %}</div>
-    {% if step > 2 %}<p class="muted">The 3-email sequence is complete. Reply to them personally from your inbox.</p>
+    <div class="stepper">{% for i in [0, 1, 2] %}{% set sent = emails|selectattr('step', 'equalto', i)|selectattr('state', 'equalto', 'sent')|list %}
+      <a href="{{ url_for('lead_page', lead_id=lead.id, step=i) }}" class="{{ 'cur' if step == i }} {{ 'done' if sent }}"><span class="num">{{ '✓' if sent else i + 1 }}</span>{{ STEP_NAMES[i] }}</a>{% endfor %}</div>
+    {% if step > 2 %}<div class="empty">{{ icon('check') }}<div>The 3-email sequence is complete. Reply to them personally from your inbox.</div></div>
     {% else %}
-    {% if block %}<p class="warn small">Sending is blocked for this step: {{ block }}.</p>{% endif %}
+    {% if block %}<div class="callout">{{ icon('alert') }}<div>Sending is blocked for this step: {{ block }}.</div></div>{% endif %}
     <form method="post" action="{{ url_for('lead_compose', lead_id=lead.id) }}" id="compose">
       <input type="hidden" name="step" value="{{ step }}"><input type="hidden" name="email_id" value="{{ draft.id or '' }}">
       <input type="hidden" name="source" value="{{ draft.source }}">
-      <label>To</label><div>{{ lead.email }}</div>
-      <label>Subject</label><input type="text" name="subject" value="{{ draft.subject }}">
-      <label>Body <span class="muted">({{ draft.source }}{% if draft.state=='failed' %}, <span class="bad">last send failed: {{ draft.error }}</span>{% endif %})</span></label>
-      <textarea name="body" class="body">{{ draft.body }}</textarea>
-      <div class="small muted pre" style="margin-top:6px;border-left:3px solid var(--line);padding-left:8px">{{ preview_footer }}</div>
-      <label>Instructions for AI (optional)</label>
-      <input type="text" name="instructions" placeholder="e.g. shorter, mention Arabic support, more casual, focus on after-hours leads">
-      <div class="row" style="margin-top:12px">
-        <button name="action" value="ai" onclick="this.textContent='✨ Writing…'">✨ Write with AI</button>
-        <button name="action" value="sheet">Use sheet draft</button>
-        <button name="action" value="save">Save draft</button>
+      <div class="row small muted" style="justify-content:space-between"><span>To <b style="color:var(--ink)">{{ lead.email or 'no email' }}</b></span>
+        <span class="pill plain">{{ {'ai': '✨ AI draft', 'sheet': 'From sheet', 'manual': 'Edited'}.get(draft.source, draft.source) }}</span></div>
+      <label class="field">Subject</label><input type="text" name="subject" value="{{ draft.subject }}">
+      <label class="field">Message</label>
+      <textarea name="body" class="editor" id="body">{{ draft.body }}</textarea>
+      <div class="row small muted" style="justify-content:space-between;margin-top:4px"><span id="wc"></span>{% if draft.state == 'failed' %}<span class="bad">Last send failed: {{ draft.error }}</span>{% endif %}</div>
+      <div class="sig">{{ preview_footer }}</div>
+      <div class="row" style="margin-top:14px">
+        <input type="text" name="instructions" class="grow" placeholder="Tell the AI what to change: shorter, mention Arabic support, more casual…">
+        <button name="action" value="ai" class="ai" data-busy="Writing…">{{ icon('sparkles') }} Write with AI</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button name="action" value="sheet" class="ghost">{{ icon('file') }} Sheet draft</button>
+        <button name="action" value="save" class="ghost">{{ icon('save') }} Save</button>
+        {% if draft.id %}<button name="action" value="discard" class="ghost danger">{{ icon('trash') }} Discard</button>{% endif %}
         <span style="flex:1"></span>
-        {% if draft.id %}<button name="action" value="discard" class="danger">Discard</button>{% endif %}
-        <button name="action" value="queue" {{ 'disabled' if block }}>Add to queue</button>
-        <button name="action" value="send" class="primary" {{ 'disabled' if block }} onclick="return confirm('Send this email to {{ lead.email }} now?')">Send now</button>
+        <button name="action" value="queue" {{ 'disabled' if block }}>{{ icon('clock') }} Queue</button>
+        <button name="action" value="send" class="primary" {{ 'disabled' if block }} onclick="return confirm('Send this email to {{ lead.email }} now?')">{{ icon('send') }} Send now</button>
       </div>
     </form>
     {% endif %}
   </div>
 
-  <div class="card"><h3>Emails</h3>
+  <div class="card"><div class="card-head"><h2>{{ icon('mail') }} Emails</h2></div>
     {% for e in emails %}
-      <details {{ 'open' if loop.last and e.state=='sent' }}><summary><b>{{ STEP_NAMES[e.step] }}</b> · {{ e.state }}
-        {% if e.sent_at %}· {{ e.sent_at[:16]|replace('T',' ') }} UTC{% endif %}
-        {% if e.open_count %}· <span class="ok">opened {{ e.open_count }}×</span>{% endif %}
-        {% if e.state=='queued' %}<form method="post" action="{{ url_for('email_cancel', email_id=e.id) }}" style="display:inline"><button class="small">Unqueue</button></form>{% endif %}
-      </summary>
-      <div class="small"><b>{{ e.subject }}</b></div><div class="pre small">{{ e.body }}</div></details>
-    {% else %}<p class="muted small">Nothing yet.</p>{% endfor %}
+      <details class="email-item" {{ 'open' if loop.last and e.state == 'sent' }}>
+        <summary><b>{{ STEP_NAMES[e.step] }}</b> {{ status(e.state) }}
+          {% if e.sent_at %}<span class="small muted">{{ e.sent_at[:16]|replace('T', ' ') }} UTC</span>{% endif %}
+          {% if e.open_count %}<span class="small ok">{{ icon('eye') }} {{ e.open_count }}×</span>{% endif %}
+          {% if e.state == 'queued' %}<form method="post" action="{{ url_for('email_cancel', email_id=e.id) }}" style="margin-left:auto"><button class="sm">Unqueue</button></form>{% endif %}
+        </summary>
+        <div class="body"><b>{{ e.subject }}</b>
+
+{{ e.body }}</div></details>
+    {% else %}<p class="muted small" style="margin:0">Nothing sent yet.</p>{% endfor %}
   </div>
-  <div class="card"><h3>Activity</h3><ul class="timeline">
-    {% for ev in events %}<li><span class="muted">{{ ev.at[:16]|replace('T',' ') }}</span> ·
-      <b class="{{ 'ok' if ev.kind=='reply' else 'bad' if ev.kind in ('bounce','error','unsubscribe') else '' }}">{{ ev.kind|replace('_',' ') }}</b> {{ ev.detail }}</li>
-    {% else %}<li class="muted">No activity yet.</li>{% endfor %}</ul></div>
+  <div class="card"><div class="card-head"><h2>{{ icon('clock') }} Activity</h2></div>
+    {% if events %}<ul class="timeline">{% for ev in events %}<li class="{{ ev.kind }}"><b>{{ ev.kind|replace('_', ' ')|capitalize }}</b>
+      <span class="muted small">· {{ ev.at[:16]|replace('T', ' ') }}</span><div class="small" style="color:var(--ink-2)">{{ ev.detail }}</div></li>{% endfor %}</ul>
+    {% else %}<p class="muted small" style="margin:0">No activity yet.</p>{% endif %}
+  </div>
 </div>
 </div>
 {% endblock %}
+{% block scripts %}<script>
+const b = document.getElementById('body'), wc = document.getElementById('wc');
+if (b) { const u = () => wc.textContent = (b.value.trim().split(/\s+/).filter(Boolean).length) + ' words'; b.addEventListener('input', u); u(); }
+</script>{% endblock %}

@@ -1,0 +1,79 @@
+{% extends "base.html" %}{% from "_ui.html" import icon, status, score, prio, avatar with context %}
+{% block title %}{{ job.name }} · Lead Scraper{% endblock %}
+{% block content %}
+{% set live = job.status in ('pending', 'running', 'discovering') %}
+{% set ok = results|selectattr('status', 'equalto', 'ok')|list %}
+<div class="row" style="margin-bottom:14px"><a href="{{ url_for('scraper_page') }}" class="small">{{ icon('left') }} Lead Scraper</a></div>
+<div class="page-head">
+  <div><div class="row" style="gap:10px"><h1>{{ job.name }}</h1>{{ status(job.status) }}</div>
+    <p>{{ 'AI discovery: ' ~ job.query if job.mode == 'discover' else 'Website list' }} ·
+      {{ 'AI enrichment on' if opts.use_ai and ai_ok else 'AI enrichment off' }}{% if opts.deep %} · deep DM search{% endif %}</p></div>
+  <div class="actions">
+    {% if live %}<form method="post" action="{{ url_for('scrape_job_cancel', job_id=job.id) }}"><button class="danger">{{ icon('stop') }} Stop</button></form>{% endif %}
+    {% if ok %}<a class="btn" href="{{ url_for('scrape_job_export', job_id=job.id) }}">{{ icon('download') }} Download .xlsx</a>
+    <button class="primary" form="addform">{{ icon('plus') }} Add <span id="addn">all {{ ok|selectattr('row.email')|list|length }}</span> to leads</button>{% endif %}
+    {% if not live %}<form method="post" action="{{ url_for('scrape_job_delete', job_id=job.id) }}" onsubmit="return confirm('Delete this scrape job?')"><button class="ghost danger" title="Delete job">{{ icon('trash') }}</button></form>{% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="row" style="justify-content:space-between"><b>{% if job.status == 'discovering' %}Finding businesses with AI…{% elif live %}Scraping {{ job.done }} of {{ job.total }} sites…{% else %}{{ job.done }} of {{ job.total }} sites processed{% endif %}</b>
+    <span class="small muted">{{ ok|length }} leads · {{ results|selectattr('status', 'equalto', 'skipped')|list|length }} skipped · {{ results|selectattr('status', 'equalto', 'failed')|list|length }} failed</span></div>
+  <div class="progress {{ 'striped' if live }}" style="margin-top:10px"><i style="width:{{ (100 * job.done / (job.total or 1))|round if job.total else (5 if live else 0) }}%"></i></div>
+  {% if job.error %}<div class="callout bad" style="margin:12px 0 0">{{ icon('alert') }}<div>{{ job.error }}</div></div>{% endif %}
+</div>
+
+<form method="post" action="{{ url_for('scrape_job_add', job_id=job.id) }}" id="addform">
+<div class="card flush"><div class="tablewrap"><table>
+  <thead><tr><th style="width:36px"><input type="checkbox" id="pickall" aria-label="Select all"></th><th>Company</th><th>Score</th><th>Decision-maker</th><th>Best email</th><th>Signals</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {% for res in results %}{% set r = res.row %}
+    <tr>
+      <td>{% if r and r.email %}<input type="checkbox" class="pick" name="rid" value="{{ res.id }}">{% endif %}</td>
+      <td><div class="co">{{ avatar(r.company if r else res.domain or res.url) }}<div style="min-width:0">
+        <b>{{ r.company if r else (res.domain or res.url) }}</b>
+        <div class="small muted truncate" style="max-width:240px"><a href="{{ r.website if r else res.url }}" target="_blank" rel="noopener">{{ res.domain or res.url }}</a>{% if r and r.industry %} · {{ r.industry }}{% endif %}</div></div></div></td>
+      <td>{% if r %}<div class="row" style="flex-wrap:nowrap;gap:8px">{{ prio(r.priority) }}{{ score(r.score) }}</div>{% endif %}</td>
+      <td>{% if r %}{{ r.contact_name or '—' }}<div class="small muted truncate" style="max-width:200px">{{ r.title }}</div>{% endif %}</td>
+      <td class="small">{% if r %}{{ r.email or '—' }}<div class="tiny muted">{{ r.email_type if r.email else '' }}</div>{% endif %}</td>
+      <td style="min-width:240px">{% if r %}<div class="chips">
+        <span class="chip {{ 'gap' if r.chat in ('None', 'WhatsApp link only') }}">{{ icon('chat') }} {{ 'No chat' if r.chat == 'None' else r.chat }}</span>
+        {% if r.ads != 'None' %}<span class="chip">{{ icon('target') }} {{ r.ads }}</span>{% endif %}
+        {% if r.booking == 'None' %}<span class="chip gap">No booking</span>{% endif %}
+        {% if r.languages == 'English' %}<span class="chip gap">English only</span>{% endif %}
+      </div>{% endif %}</td>
+      <td>{{ status(res.status) }}{% if res.lead_id %}<div class="tiny"><a href="{{ url_for('lead_page', lead_id=res.lead_id) }}">in leads →</a></div>{% elif res.reason %}<div class="tiny muted" style="max-width:200px">{{ res.reason }}</div>{% endif %}</td>
+      <td>{% if r %}<button type="button" class="sm ghost" onclick="document.getElementById('d{{ res.id }}').classList.toggle('hide')">Details</button>{% endif %}</td>
+    </tr>
+    {% if r %}<tr id="d{{ res.id }}" class="result-detail hide"><td></td><td colspan="7">
+      <div class="grid g2">
+        <div><h3>Why they need AI</h3><div class="bullets small">{{ r.evidence }}</div>
+          <h3 style="margin-top:12px">How you can help</h3><div class="bullets small">{{ r.solution }}</div>
+          <h3 style="margin-top:12px">Contacts</h3><dl class="kv small">
+            {% if r.other_emails %}<dt>Other emails</dt><dd>{{ r.other_emails }}</dd>{% endif %}
+            {% if r.phone %}<dt>Phone</dt><dd>{{ r.phone }}</dd>{% endif %}{% if r.whatsapp %}<dt>WhatsApp</dt><dd>{{ r.whatsapp }}</dd>{% endif %}
+            {% if r.company_linkedin %}<dt>LinkedIn</dt><dd><a href="{{ r.company_linkedin }}" target="_blank" rel="noopener">{{ r.company_linkedin }}</a></dd>{% endif %}
+            {% if r.other_contacts %}<dt>Other people</dt><dd>{{ r.other_contacts }}</dd>{% endif %}
+            <dt>Booking</dt><dd>{{ r.booking }}</dd><dt>Tools</dt><dd>{{ r.crm }}</dd><dt>Languages</dt><dd>{{ r.languages }}</dd>
+            {% if r.claims %}<dt>Claims</dt><dd>{{ r.claims }}</dd>{% endif %}
+          </dl></div>
+        <div><h3>Opener</h3><div class="bullets small">{{ r.opener }}</div>
+          {% if r.email1 %}<h3 style="margin-top:12px">Email 1 · {{ r.subject }}</h3><div class="bullets small">{{ r.email1 }}</div>{% endif %}
+          {% if r.check_note %}<div class="callout small" style="margin-top:12px">{{ icon('alert') }}<div>{{ r.check_note }}</div></div>{% endif %}
+          <details style="margin-top:8px"><summary class="tiny muted">Pages crawled</summary><div class="tiny muted pre">{{ r.pages }}</div></details></div>
+      </div></td></tr>{% endif %}
+  {% else %}<tr><td colspan="8"><div class="empty">{{ icon('radar') }}<div>{{ 'Waiting for results…' if live else 'No results.' }}</div></div></td></tr>{% endfor %}
+  </tbody></table></div></div>
+</form>
+{% endblock %}
+{% block scripts %}<script>
+const picks = [...document.querySelectorAll('.pick')], addn = document.getElementById('addn');
+const sync = () => { const n = picks.filter(p => p.checked).length; if (addn) addn.textContent = n ? n : 'all {{ ok|selectattr("row.email")|list|length }}'; };
+picks.forEach(p => p.addEventListener('change', sync));
+const pa = document.getElementById('pickall'); if (pa) pa.addEventListener('change', e => { picks.forEach(p => p.checked = e.target.checked); sync(); });
+{% if live %}
+let last = {{ job.done }};
+setInterval(() => fetch('{{ url_for("scrape_job_status", job_id=job.id) }}').then(r => r.json()).then(j => {
+  if (j.done !== last || !['pending', 'running', 'discovering'].includes(j.status)) location.reload(); }), 4000);
+{% endif %}
+</script>{% endblock %}

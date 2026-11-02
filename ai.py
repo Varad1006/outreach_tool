@@ -144,73 +144,128 @@ def draft_email(lead, step, settings, instructions="", previous=None):
     return _json_call(system, "\n".join(parts), DRAFT_SCHEMA, effort="medium")
 
 
-# ---------------------------------------------------------------- research a new lead
+# ---------------------------------------------------------------- scraper agent
 
-LEAD_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "company": {"type": "string"},
-        "website": {"type": "string"},
-        "industry": {"type": "string"},
-        "country": {"type": "string"},
-        "city": {"type": "string"},
-        "contact_name": {"type": "string", "description": "Decision-maker's full name, or empty if not found"},
-        "title": {"type": "string"},
-        "email": {"type": "string", "description": "Best published email address, or empty if none was found"},
-        "email_type": {"type": "string", "enum": ["Direct: decision-maker", "General inbox (address FAO decision-maker)",
-                                                  "Company contact, other staff (address FAO decision-maker)", "Not found"]},
-        "email_source": {"type": "string", "description": "URL where the email address was published"},
-        "other_emails": {"type": "string"},
-        "phone": {"type": "string"},
-        "linkedin": {"type": "string"},
-        "ai_need_score": {"type": "integer", "description": "0-100: how much they'd benefit from AI automation"},
-        "evidence": {"type": "string", "description": "Bullet list (• ...) of concrete observations from their site"},
-        "solution": {"type": "string", "description": "Bullet list (• ...) of specific AI solutions to pitch"},
-        "services": {"type": "string", "description": "Which of the sender's services fit, joined with ' + '"},
-        "opener": {"type": "string", "description": "2-3 sentence personalised email opener"},
-        "check_note": {"type": "string", "description": "Anything the sender should verify before emailing"},
-    },
-    "required": ["company", "website", "industry", "country", "city", "contact_name", "title", "email", "email_type",
-                 "email_source", "other_emails", "phone", "linkedin", "ai_need_score", "evidence", "solution",
-                 "services", "opener", "check_note"],
-    "additionalProperties": False,
-}
-
-
-def research_lead(query, settings):
-    """Research a company on the web and return a structured lead. Two steps: web research, then extraction."""
+def _web_research(task, searches=5, fetches=6):
+    """One Claude turn with web search + fetch; resumes server-side tool loops that pause."""
     tools = [
-        {"type": "web_search_20260209", "name": "web_search", "max_uses": 6},
-        {"type": "web_fetch_20260209", "name": "web_fetch", "max_uses": 8},
+        {"type": "web_search_20260209", "name": "web_search", "max_uses": searches},
+        {"type": "web_fetch_20260209", "name": "web_fetch", "max_uses": fetches},
     ]
-    task = (
-        f"Research this business as a potential client for AI automation services: {query}\n\n"
-        f"About me (the seller):\n{settings.get('about_me', '')}\n\n"
-        "Find and report:\n"
-        "1. Company name, website, industry, city/country, size signals.\n"
-        "2. The owner / CEO / managing partner (or the most senior relevant person) and their title.\n"
-        "3. Email addresses that are PUBLISHED on their own website or a public business directory - give the page "
-        "URL for each. Never guess or construct an address from a name pattern.\n"
-        "4. Phone, LinkedIn.\n"
-        "5. How they currently handle enquiries: live chat / chatbot / WhatsApp button / online booking / forms, "
-        "languages, signs of paid ads, review volume, anything showing slow response or manual work.\n"
-        "6. Concretely, which AI systems would save them time or win more leads, and why.\n"
-        "If they already run an AI chatbot, say so clearly. Be factual; mark anything uncertain."
-    )
     messages = [{"role": "user", "content": task}]
     resp = None
-    for _ in range(5):  # resume server-side tool loops that pause
+    for _ in range(5):
         resp = _create(model=MODEL, max_tokens=16000, output_config={"effort": "medium"}, tools=tools, messages=messages)
         if resp.stop_reason != "pause_turn":
             break
         messages = [{"role": "user", "content": task}, {"role": "assistant", "content": resp.content}]
-    report = _text(resp)
-    if not report:
-        raise AIError("Research returned nothing. Check the company name / URL and try again.")
+    return _text(resp)
 
-    system = ("Convert a research report into a lead record. Use only what the report states. Leave a field as an "
-              "empty string if it isn't in the report. Never invent an email address.")
-    lead = _json_call(system, f"Seller profile:\n{settings.get('about_me', '')}\n\nResearch report:\n{report}",
-                      LEAD_SCHEMA, effort="low")
-    lead["report"] = report
-    return lead
+
+ENRICH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "company": {"type": "string", "description": "Clean company / firm name"},
+        "industry": {"type": "string", "description": "e.g. Real estate brokerage, Immigration law, Personal injury law"},
+        "city": {"type": "string"},
+        "country": {"type": "string"},
+        "contact_name": {"type": "string", "description": "Most senior decision-maker named in the pages, or empty"},
+        "title": {"type": "string"},
+        "dm_source": {"type": "string", "description": "Page URL where the decision-maker was found, or empty"},
+        "other_contacts": {"type": "string", "description": "Other senior people as 'Name (Title); ...'"},
+        "score": {"type": "integer", "description": "AI Need Score 0-100; start from the rule-based score and adjust by at most 10"},
+        "evidence": {"type": "string", "description": "3-5 bullets starting with '• ', concrete facts from the crawl"},
+        "solution": {"type": "string", "description": "2-4 bullets starting with '• ', specific AI systems to build for them"},
+        "services": {"type": "string", "description": "Seller services that fit, joined with ' + '"},
+        "opener": {"type": "string", "description": "2-3 sentence personalised opener with one specific observation and a question"},
+        "subject": {"type": "string", "description": "Under 7 words, specific to them"},
+        "email1": {"type": "string", "description": "Full first email body (90-150 words), no signature"},
+        "fu1": {"type": "string", "description": "Follow-up 1 (30-60 words): offer a short free demo"},
+        "fu2": {"type": "string", "description": "Follow-up 2 (25-50 words): close the loop, offer a free 15-minute audit"},
+        "check_note": {"type": "string", "description": "Anything to verify before sending (uncertain name, already has AI, etc.), or empty"},
+    },
+    "required": ["company", "industry", "city", "country", "contact_name", "title", "dm_source", "other_contacts",
+                 "score", "evidence", "solution", "services", "opener", "subject", "email1", "fu1", "fu2", "check_note"],
+    "additionalProperties": False,
+}
+
+SEGMENT_HINT = {
+    "dubai": "This is a Dubai real-estate brokerage. Typical pains: slow WhatsApp/portal lead replies, off-plan and "
+             "payment-plan questions, multilingual buyers (EN/AR/RU), booking viewings.",
+    "law": "This is a law firm (UK or Canada). Typical pains: after-hours enquiries, intake qualification, booking "
+           "consultations, case status calls, document checklists. Keep claims modest and mention privacy.",
+}
+
+
+def enrich_scraped(facts, base, settings, segment="other"):
+    """Turn crawled facts into a full lead row: decision-maker, evidence, pitch and a 3-email sequence."""
+    signals = {k: facts.get(k) for k in ("domain", "company", "description", "chat", "ai_chat", "whatsapp", "ads",
+                                          "booking", "crm", "languages", "claims", "portals", "listings_hint",
+                                          "reviews_hint", "people", "emails", "phones", "linkedin_company")}
+    system = (
+        "You turn website crawl data into an outreach lead for a solo AI automation engineer. Use only facts present "
+        "in the data; never invent names, numbers or email addresses. Plain, specific, human writing: no hype, no "
+        "emojis, no exclamation marks. Emails: address the decision-maker by first name (or 'Hi there' if unknown); "
+        "if the best email is a general inbox, start email1 with 'FAO <name>, <title>'. No signature or "
+        "unsubscribe line (added automatically).\n\n"
+        f"About the seller:\n{settings.get('about_me', '')}"
+    )
+    prompt = "\n".join([
+        SEGMENT_HINT.get(segment, "Work out the industry from the pages."),
+        "",
+        f"Rule-based AI Need Score: {base['score']} because:\n{base['evidence']}",
+        f"Best email chosen: {base['email']} ({base['email_type']})",
+        "",
+        "Detected signals (JSON):",
+        json.dumps(signals, ensure_ascii=False)[:6000],
+        "",
+        "Page text from the crawl:",
+        facts.get("page_text", "")[:14000],
+    ])
+    return _json_call(system, prompt, ENRICH_SCHEMA, effort="medium", max_tokens=12000)
+
+
+DM_SCHEMA = {
+    "type": "object",
+    "properties": {"name": {"type": "string"}, "title": {"type": "string"}, "linkedin": {"type": "string"},
+                   "source": {"type": "string"}},
+    "required": ["name", "title", "linkedin", "source"],
+    "additionalProperties": False,
+}
+
+
+def find_decision_maker(company, website, city=""):
+    """Web search for the owner / CEO / managing partner when the website doesn't name one."""
+    report = _web_research(
+        f"Who is the owner, founder, CEO, managing director or managing partner of {company} ({website}) {city}? "
+        "Check LinkedIn, the company's own site, business directories and news. Give the name, exact title, "
+        "LinkedIn profile URL if found, and the source URL. If you can't confirm a current person from two "
+        "sources or the company's own site, say so.", searches=4, fetches=3)
+    return _json_call("Extract the confirmed decision-maker from this report. Leave fields empty if not confirmed.",
+                      report, DM_SCHEMA, effort="low", max_tokens=2000)
+
+
+DISCOVER_SCHEMA = {
+    "type": "object",
+    "properties": {"companies": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"company": {"type": "string"}, "website": {"type": "string"}, "why": {"type": "string"}},
+        "required": ["company", "website", "why"], "additionalProperties": False}}},
+    "required": ["companies"],
+    "additionalProperties": False,
+}
+
+
+def discover_companies(query, count, exclude_domains=()):
+    """Find candidate small/mid-size businesses (with their own website) matching a description."""
+    excl = ", ".join(sorted(exclude_domains)[:150])
+    report = _web_research(
+        f"Find up to {count} small or mid-size businesses matching: {query}.\n"
+        "Rules: each must have its own website domain (not just a directory listing); skip national chains, "
+        "franchises, big brands and directories/listicles; prefer firms that look busy (many listings, reviews, "
+        "or ads). For each, give the company name and its homepage URL.\n"
+        + (f"Skip these domains, already in my list: {excl}" if excl else ""),
+        searches=8, fetches=4)
+    out = _json_call("Extract the businesses from this report as a list. Homepage URLs only. No directories.",
+                     report, DISCOVER_SCHEMA, effort="low", max_tokens=6000)
+    return out["companies"][:count]

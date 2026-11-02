@@ -137,6 +137,32 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_lead ON events(lead_id);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS scrape_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    segment TEXT DEFAULT 'other',
+    mode TEXT,                 -- urls | discover
+    query TEXT,
+    options TEXT,              -- json
+    status TEXT DEFAULT 'pending',   -- pending | discovering | running | done | failed | cancelled
+    total INTEGER DEFAULT 0,
+    done INTEGER DEFAULT 0,
+    error TEXT,
+    created_at TEXT,
+    finished_at TEXT
+);
+CREATE TABLE IF NOT EXISTS scrape_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL REFERENCES scrape_jobs(id) ON DELETE CASCADE,
+    url TEXT,
+    domain TEXT,
+    status TEXT DEFAULT 'pending',   -- pending | running | ok | failed | skipped
+    reason TEXT,
+    row TEXT,                  -- json lead row
+    lead_id INTEGER,
+    created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_results_job ON scrape_results(job_id);
 """
 
 

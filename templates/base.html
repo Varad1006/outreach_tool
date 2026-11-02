@@ -1,34 +1,61 @@
-<!doctype html>
+{% from "_ui.html" import icon with context %}<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Outreach Agent{% endblock %}</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='%236366f1' d='M13 2 3 14h9l-1 8 10-12h-9l1-8z'/></svg>">
+</head>
 <body>
-<header>
-  <span class="brand">⚡ Outreach Agent</span>
-  <nav>
-    <a href="{{ url_for('dashboard') }}">Leads</a>
-    <a href="{{ url_for('dashboard', view='due') }}">Follow-ups due</a>
-    <a href="{{ url_for('research_page') }}">Research a lead</a>
-    <a href="{{ url_for('queue_page') }}">Send queue</a>
-    <a href="{{ url_for('import_page') }}">Import</a>
-    <a href="{{ url_for('settings_page') }}">Settings</a>
-    <a href="{{ url_for('export') }}">Export .xlsx</a>
-  </nav>
-  <div class="right small">
-    <span title="Claude API"><span class="dot {{ 'on' if ai_ok else 'off' }}"></span>AI</span>
-    <span title="SMTP sending"><span class="dot {{ 'on' if smtp_ok else 'off' }}"></span>Send</span>
-    <span title="IMAP reply tracking"><span class="dot {{ 'on' if imap_ok else 'off' }}"></span>Inbox</span>
-    {% if JOBS.total and JOBS.done < JOBS.total %}<span class="chip" id="jobs">AI drafting {{ JOBS.done }}/{{ JOBS.total }}</span>{% endif %}
-    <form method="post" action="{{ url_for('check_inbox') }}"><button title="Look for replies, bounces and opt-outs">↻ Check replies</button></form>
+{% set ep = request.endpoint %}
+<div class="app" id="app">
+  <aside class="side">
+    <div class="brand"><span class="logo">{{ icon('zap') }}</span><div>Outreach Agent<small>AI client acquisition</small></div></div>
+    <nav class="nav">
+      <a href="{{ url_for('dashboard') }}" class="{{ 'active' if ep == 'dashboard' }}">{{ icon('grid') }} Dashboard</a>
+      <a href="{{ url_for('leads_page') }}" class="{{ 'active' if ep in ('leads_page', 'lead_page') and request.args.get('view') != 'due' }}">{{ icon('users') }} Leads <span class="count">{{ NAV.leads }}</span></a>
+      <a href="{{ url_for('scraper_page') }}" class="{{ 'active' if ep and ep.startswith('scrape') }}">{{ icon('radar') }} Lead Scraper {% if NAV.jobs %}<span class="count hot">{{ NAV.jobs }} running</span>{% endif %}</a>
+      <div class="nav-label">Outreach</div>
+      <a href="{{ url_for('leads_page', view='drafts') }}" class="{{ 'active' if request.args.get('view') == 'drafts' }}">{{ icon('file') }} Drafts {% if NAV.drafts %}<span class="count">{{ NAV.drafts }}</span>{% endif %}</a>
+      <a href="{{ url_for('leads_page', view='due') }}" class="{{ 'active' if request.args.get('view') == 'due' }}">{{ icon('clock') }} Follow-ups due {% if NAV.due %}<span class="count hot">{{ NAV.due }}</span>{% endif %}</a>
+      <a href="{{ url_for('queue_page') }}" class="{{ 'active' if ep == 'queue_page' }}">{{ icon('send') }} Send queue {% if NAV.queued %}<span class="count">{{ NAV.queued }}</span>{% endif %}</a>
+      <div class="nav-label">Data</div>
+      <a href="{{ url_for('import_page') }}" class="{{ 'active' if ep == 'import_page' }}">{{ icon('upload') }} Import</a>
+      <a href="{{ url_for('export') }}">{{ icon('download') }} Export .xlsx</a>
+      <a href="{{ url_for('settings_page') }}" class="{{ 'active' if ep == 'settings_page' }}">{{ icon('sliders') }} Settings</a>
+    </nav>
+    <div class="side-foot">
+      <div class="conn"><span class="dot {{ 'on' if ai_ok else 'off' }}"></span> Claude AI</div>
+      <div class="conn"><span class="dot {{ 'on' if smtp_ok else 'off' }}"></span> Sending (SMTP)</div>
+      <div class="conn"><span class="dot {{ 'on' if imap_ok else 'off' }}"></span> Reply tracking (IMAP)</div>
+    </div>
+  </aside>
+  <div class="main">
+    <div class="topbar">
+      <button class="menu-btn ghost" onclick="document.getElementById('app').classList.toggle('nav-open')" aria-label="Menu">{{ icon('menu', 'lg') }}</button>
+      <span style="flex:1"></span>
+      {% if JOBS.total and JOBS.done < JOBS.total %}<span class="pill st-running" id="jobs">AI drafting {{ JOBS.done }}/{{ JOBS.total }}</span>{% endif %}
+      <form method="post" action="{{ url_for('check_inbox') }}"><button title="Find replies, bounces and opt-outs in your inbox">{{ icon('inbox') }} Check replies</button></form>
+    </div>
+    <div class="content">
+      {% if JOBS.errors %}<div class="callout bad">{{ icon('alert') }}<div><b>{{ JOBS.errors|length }} AI drafting error(s).</b> {{ JOBS.errors[-1] }}</div></div>{% endif %}
+      {% block content %}{% endblock %}
+    </div>
   </div>
-</header>
-<main>
-  {% with msgs = get_flashed_messages(with_categories=true) %}{% for cat, m in msgs %}
-    <div class="flash {{ cat }}">{{ m }}</div>{% endfor %}{% endwith %}
-  {% if JOBS.errors %}<details class="flash error"><summary>{{ JOBS.errors|length }} AI drafting error(s)</summary>{% for e in JOBS.errors[-10:] %}<div>{{ e }}</div>{% endfor %}</details>{% endif %}
-  {% block content %}{% endblock %}
-</main>
+</div>
+<div class="flash-stack">
+{% with msgs = get_flashed_messages(with_categories=true) %}{% for cat, m in msgs %}
+  <div class="toast {{ cat }}">{{ icon('alert' if cat == 'error' else 'check') }}<div>{{ m }}</div><button onclick="this.parentElement.remove()" aria-label="Dismiss">✕</button></div>
+{% endfor %}{% endwith %}
+</div>
+<script>
+document.querySelectorAll('.toast:not(.error)').forEach(t => setTimeout(() => t.remove(), 6000));
+document.querySelectorAll('[data-busy]').forEach(b => b.addEventListener('click', () => setTimeout(() => { b.disabled = true; b.innerHTML = b.dataset.busy; }, 0)));
 {% if JOBS.total and JOBS.done < JOBS.total %}
-<script>setTimeout(()=>fetch('{{ url_for("api_jobs") }}').then(r=>r.json()).then(j=>{const el=document.getElementById('jobs');if(el)el.textContent=`AI drafting ${j.done}/${j.total}`;if(j.done>=j.total)location.reload();else setTimeout(arguments.callee,4000)}),4000)</script>
+(function poll(){ setTimeout(() => fetch('{{ url_for("api_jobs") }}').then(r => r.json()).then(j => {
+  const el = document.getElementById('jobs'); if (el) el.textContent = `AI drafting ${j.done}/${j.total}`;
+  if (j.done >= j.total) location.reload(); else poll(); }), 4000); })();
 {% endif %}
+</script>
+{% block scripts %}{% endblock %}
 </body></html>
