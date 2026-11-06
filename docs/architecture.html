@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Outreach Agent Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f4f5f8; --surface: #fff; --surface-2: #f8f9fb; --ink: #121826; --ink-2: #3b4456; --muted: #6b7486; --line: #dfe3ea;
+  --accent: #4f46e5; --accent-soft: #eef0ff; --ok: #059669; --ok-soft: #e7f7f0; --warn: #b45309; --warn-soft: #fdf3e2;
+  --info: #0369a1; --info-soft: #e6f3fb; --violet: #7c3aed; --violet-soft: #f1eafe; --app: #f6f7ff; --app-line: #c7cbf7;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0b0f19; --surface: #131a28; --surface-2: #182032; --ink: #e8ebf2; --ink-2: #c3c9d6; --muted: #8b94a7; --line: #2a3346;
+    --accent: #818cf8; --accent-soft: #1f2447; --ok: #34d399; --ok-soft: #0f2a22; --warn: #fbbf24; --warn-soft: #2d2410;
+    --info: #7dd3fc; --info-soft: #0f2533; --violet: #c4b5fd; --violet-soft: #241b3d; --app: #121831; --app-line: #3a4180;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0b0f19; --surface: #131a28; --surface-2: #182032; --ink: #e8ebf2; --ink-2: #c3c9d6; --muted: #8b94a7; --line: #2a3346;
+  --accent: #818cf8; --accent-soft: #1f2447; --ok: #34d399; --ok-soft: #0f2a22; --warn: #fbbf24; --warn-soft: #2d2410;
+  --info: #7dd3fc; --info-soft: #0f2533; --violet: #c4b5fd; --violet-soft: #241b3d; --app: #121831; --app-line: #3a4180;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 "Inter", system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+main { max-width: 1180px; margin: 0 auto; padding: 40px 16px 64px; }
+h1 { font-size: 30px; letter-spacing: -.02em; margin: 0 0 6px; }
+h2 { font-size: 19px; margin: 44px 0 6px; letter-spacing: -.01em; }
+p.lead { color: var(--muted); margin: 0 0 22px; max-width: 760px; }
+.sub { color: var(--muted); margin: 0 0 16px; font-size: 14px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+.diagram { padding: 10px; overflow-x: auto; }
+.diagram svg { display: block; width: 100%; min-width: 860px; height: auto; }
+svg text { font-family: "Inter", system-ui, sans-serif; fill: var(--ink); }
+svg .t { font-size: 14px; font-weight: 600; }
+svg .s { font-size: 11.5px; fill: var(--muted); }
+svg .lbl { font-size: 11px; fill: var(--muted); }
+svg .grp { font-size: 12px; font-weight: 700; letter-spacing: .06em; fill: var(--muted); }
+svg .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+svg .appbox { fill: var(--app); stroke: var(--app-line); stroke-width: 1.5; stroke-dasharray: 6 5; }
+svg .ui { fill: var(--accent-soft); stroke: var(--accent); }
+svg .worker { fill: var(--violet-soft); stroke: var(--violet); }
+svg .mod { fill: var(--surface); stroke: var(--line); }
+svg .db { fill: var(--warn-soft); stroke: var(--warn); }
+svg .ext { fill: var(--info-soft); stroke: var(--info); }
+svg .mail { fill: var(--ok-soft); stroke: var(--ok); }
+svg .arrow { stroke: var(--muted); stroke-width: 1.6; fill: none; }
+svg .arrow.hot { stroke: var(--accent); }
+svg .num circle { fill: var(--accent); } svg .num text { fill: #fff; font-size: 11px; font-weight: 700; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin: 10px 4px 2px; }
+.legend span::before { content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; border: 1.5px solid; }
+.lg-ui::before { background: var(--accent-soft); border-color: var(--accent) !important; }
+.lg-w::before { background: var(--violet-soft); border-color: var(--violet) !important; }
+.lg-db::before { background: var(--warn-soft); border-color: var(--warn) !important; }
+.lg-ext::before { background: var(--info-soft); border-color: var(--info) !important; }
+.lg-mail::before { background: var(--ok-soft); border-color: var(--ok) !important; }
+.flows { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.flow { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.flow b { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.flow .n { width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff; display: inline-grid; place-items: center; font-size: 12px; flex: none; }
+.flow p { margin: 0; font-size: 13.5px; color: var(--ink-2); }
+.why { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 10px; }
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+summary { cursor: pointer; list-style: none; padding: 13px 16px; display: flex; gap: 10px; align-items: center; font-weight: 600; }
+summary::-webkit-details-marker { display: none; }
+summary::after { content: "+"; margin-left: auto; color: var(--muted); font-weight: 400; font-size: 18px; line-height: 1; }
+details[open] summary::after { content: "−"; }
+summary .tag { font-size: 11.5px; font-weight: 500; color: var(--muted); }
+details .body { padding: 0 16px 14px; font-size: 14px; color: var(--ink-2); }
+details .body p { margin: 0 0 6px; }
+details .body .alt { font-size: 13px; color: var(--muted); }
+.chip { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-2); }
+.toolbar { display: flex; gap: 8px; margin: 0 0 10px; flex-wrap: wrap; }
+button { font: 500 13px "Inter", system-ui, sans-serif; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+button:hover { border-color: var(--accent); }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); background: var(--surface-2); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr.total td { font-weight: 700; background: var(--accent-soft); }
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.costgrid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 900px) { .costgrid { grid-template-columns: 1fr; } h1 { font-size: 24px; } }
+.note { font-size: 13px; color: var(--muted); margin-top: 10px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.kpi .v { font-size: 24px; font-weight: 700; letter-spacing: -.02em; }
+.kpi .l { font-size: 12.5px; color: var(--muted); }
+a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Outreach Agent architecture</h1>
+  <p class="lead">A local, single-user web app. It finds clients that match your profile, scrapes their websites into AI-ready leads, writes personalised emails with Claude, sends them from your own mailbox and tracks replies.</p>
+
+  <div class="card diagram" role="img" aria-label="Architecture diagram of the Outreach Agent">
+    <svg viewBox="0 0 1200 690" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#8b94a7"/></marker>
+        <marker id="ahh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#6366f1"/></marker>
+      </defs>
+
+      <!-- column labels -->
+      <text x="30" y="30" class="grp">INPUTS</text>
+      <text x="300" y="30" class="grp">OUTREACH AGENT · RUNS ON YOUR LAPTOP</text>
+      <text x="950" y="30" class="grp">EXTERNAL SERVICES</text>
+
+      <!-- inputs -->
+      <rect x="20" y="70" width="220" height="72" rx="12" class="box ui"/>
+      <text x="38" y="100" class="t">You</text><text x="38" y="121" class="s">browser · 127.0.0.1:5050</text>
+      <rect x="20" y="300" width="220" height="72" rx="12" class="box"/>
+      <text x="38" y="330" class="t">Lead sheet</text><text x="38" y="351" class="s">.xlsx or Google Sheets link</text>
+      <rect x="20" y="420" width="220" height="72" rx="12" class="box"/>
+      <text x="38" y="450" class="t">Your profile</text><text x="38" y="471" class="s">website · resume · skills</text>
+
+      <!-- app container -->
+      <rect x="290" y="45" width="600" height="625" rx="18" class="appbox"/>
+      <rect x="320" y="75" width="540" height="62" rx="12" class="box ui"/>
+      <text x="340" y="102" class="t">Web UI · Flask + Jinja templates</text>
+      <text x="340" y="123" class="s">Dashboard · Leads · Lead Scraper · Send queue · Settings</text>
+
+      <rect x="320" y="165" width="540" height="62" rx="12" class="box"/>
+      <text x="340" y="192" class="t">App core · app.py</text>
+      <text x="340" y="213" class="s">routes · send guards · follow-up rules · scoring of past leads</text>
+
+      <rect x="320" y="255" width="170" height="66" rx="12" class="box worker"/>
+      <text x="336" y="282" class="t">Scraper worker</text><text x="336" y="303" class="s">find + crawl leads</text>
+      <rect x="505" y="255" width="170" height="66" rx="12" class="box worker"/>
+      <text x="521" y="282" class="t">AI draft worker</text><text x="521" y="303" class="s">bulk email drafts</text>
+      <rect x="690" y="255" width="170" height="66" rx="12" class="box worker"/>
+      <text x="706" y="282" class="t">Send queue worker</text><text x="706" y="303" class="s">daily limit · random gaps</text>
+
+      <rect x="320" y="350" width="126" height="70" rx="12" class="box mod"/>
+      <text x="334" y="378" class="t">importer.py</text><text x="334" y="399" class="s">xlsx in / out</text>
+      <rect x="458" y="350" width="126" height="70" rx="12" class="box mod"/>
+      <text x="472" y="378" class="t">scraper.py</text><text x="472" y="399" class="s">crawl · score</text>
+      <rect x="596" y="350" width="126" height="70" rx="12" class="box mod"/>
+      <text x="610" y="378" class="t">ai.py</text><text x="610" y="399" class="s">Claude prompts</text>
+      <rect x="734" y="350" width="126" height="70" rx="12" class="box mod"/>
+      <text x="748" y="378" class="t">mailer.py</text><text x="748" y="399" class="s">SMTP · IMAP</text>
+
+      <rect x="320" y="460" width="540" height="66" rx="12" class="box db"/>
+      <text x="340" y="488" class="t">SQLite · data/outreach.db</text>
+      <text x="340" y="509" class="s">leads · emails · events · scrape jobs · settings (profile, segments)</text>
+
+      <rect x="320" y="560" width="540" height="62" rx="12" class="box"/>
+      <text x="340" y="587" class="t">Outputs</text>
+      <text x="340" y="608" class="s">Excel export (same columns as your sheet) · optional open-tracking pixel</text>
+
+      <!-- internal arrows -->
+      <path d="M590 137 L590 165" class="arrow" marker-end="url(#ah)" marker-start="url(#ah)"/>
+      <path d="M590 227 L590 255" class="arrow" marker-end="url(#ah)"/>
+      <path d="M405 321 L405 350" class="arrow" marker-end="url(#ah)"/>
+      <path d="M590 321 L635 350" class="arrow" marker-end="url(#ah)"/>
+      <path d="M775 321 L797 350" class="arrow" marker-end="url(#ah)"/>
+      <path d="M383 420 L383 460" class="arrow" marker-end="url(#ah)" marker-start="url(#ah)"/>
+      <path d="M521 420 L521 460" class="arrow" marker-end="url(#ah)"/>
+      <path d="M659 420 L659 460" class="arrow" marker-end="url(#ah)"/>
+      <path d="M797 420 L797 460" class="arrow" marker-end="url(#ah)" marker-start="url(#ah)"/>
+      <path d="M590 526 L590 560" class="arrow" marker-end="url(#ah)"/>
+
+      <!-- inputs to app -->
+      <path d="M240 106 L320 106" class="arrow hot" marker-end="url(#ahh)" marker-start="url(#ahh)"/>
+      <path d="M240 336 L300 336 L300 385 L320 385" class="arrow hot" marker-end="url(#ahh)"/>
+      <path d="M240 456 L272 456 L272 440 L640 440 L640 420" class="arrow hot" marker-end="url(#ahh)"/>
+
+      <!-- app to external -->
+      <rect x="940" y="70" width="240" height="84" rx="12" class="box ext"/>
+      <text x="958" y="100" class="t">Claude API</text><text x="958" y="121" class="s">Opus 5.5 · web search · web fetch</text>
+      <text x="958" y="140" class="s">profile · segments · enrich · drafts</text>
+      <rect x="940" y="185" width="240" height="72" rx="12" class="box ext"/>
+      <text x="958" y="215" class="t">Company websites</text><text x="958" y="236" class="s">home · contact · team · GTM</text>
+      <rect x="940" y="330" width="240" height="66" rx="12" class="box mail"/>
+      <text x="958" y="358" class="t">Hostinger SMTP</text><text x="958" y="379" class="s">send · port 465 (587 fallback)</text>
+      <rect x="940" y="432" width="240" height="66" rx="12" class="box"/>
+      <text x="958" y="460" class="t">Prospect's inbox</text><text x="958" y="481" class="s">reads · replies · bounces</text>
+      <rect x="940" y="534" width="240" height="66" rx="12" class="box mail"/>
+      <text x="958" y="562" class="t">Hostinger IMAP</text><text x="958" y="583" class="s">replies · bounces · opt-outs</text>
+
+      <path d="M890 112 L940 112" class="arrow hot" marker-end="url(#ahh)" marker-start="url(#ahh)"/>
+      <path d="M890 221 L940 221" class="arrow" marker-end="url(#ah)"/>
+      <path d="M890 363 L940 363" class="arrow" marker-end="url(#ah)"/>
+      <path d="M1060 396 L1060 432" class="arrow" marker-end="url(#ah)"/>
+      <path d="M1060 498 L1060 534" class="arrow" marker-end="url(#ah)"/>
+      <path d="M940 567 L890 567" class="arrow" marker-end="url(#ah)"/>
+
+      <!-- flow numbers -->
+      <g class="num"><circle cx="270" cy="336" r="11"/><text x="266" y="340">1</text></g>
+      <g class="num"><circle cx="915" cy="221" r="11"/><text x="911" y="225">2</text></g>
+      <g class="num"><circle cx="915" cy="112" r="11"/><text x="911" y="116">3</text></g>
+      <g class="num"><circle cx="915" cy="363" r="11"/><text x="911" y="367">4</text></g>
+      <g class="num"><circle cx="915" cy="567" r="11"/><text x="911" y="571">5</text></g>
+      <g class="num"><circle cx="618" cy="543" r="11"/><text x="614" y="547">6</text></g>
+    </svg>
+    <div class="legend"><span class="lg-ui">You &amp; the UI</span><span class="lg-w">Background workers</span><span class="lg-db">Storage</span><span class="lg-ext">AI &amp; the web</span><span class="lg-mail">Your mailbox</span></div>
+  </div>
+
+  <h2>How a lead moves through the system</h2>
+  <p class="sub">The numbers match the circles in the diagram.</p>
+  <div class="flows">
+    <div class="flow"><b><span class="n">1</span>Import</b><p>Your lead sheet (.xlsx or Google Sheets link) is read into the database. Re-imports update details but keep your statuses and history.</p></div>
+    <div class="flow"><b><span class="n">2</span>Find &amp; scrape</b><p>Claude turns your profile and past-lead results into target segments, then finds matching businesses. The scraper reads each site and scores how much it needs AI.</p></div>
+    <div class="flow"><b><span class="n">3</span>Write</b><p>Claude writes the evidence, pitch, opener and a 3-email sequence for each lead. You can rewrite any email with one click and your own instructions.</p></div>
+    <div class="flow"><b><span class="n">4</span>Send</b><p>Approved emails go into a queue. The worker sends them one by one from your Hostinger mailbox, with random gaps and a daily cap. Follow-ups are sent in the same thread.</p></div>
+    <div class="flow"><b><span class="n">5</span>Track</b><p>"Check replies" reads your inbox over IMAP. Replies, bounces and opt-outs update the lead's status and stop any further follow-ups.</p></div>
+    <div class="flow"><b><span class="n">6</span>Export</b><p>Statuses and notes are written back into your original workbook, so the spreadsheet stays your source of truth.</p></div>
+  </div>
+
+  <h2>Why we used what</h2>
+  <div class="toolbar"><button type="button" id="openall">Expand all</button><button type="button" id="closeall">Collapse all</button></div>
+  <div class="why">
+    <details><summary>Python + Flask <span class="tag">web app</span></summary><div class="body">
+      <p>One small language for everything: scraping, Excel, email and the Claude SDK all have mature Python libraries. Flask serves the pages with almost no setup.</p>
+      <p class="alt">Instead of: Node/Next.js (two languages, a build step); Django (more structure than a one-person tool needs).</p></div></details>
+    <details><summary>Server-rendered pages (Jinja) <span class="tag">UI</span></summary><div class="body">
+      <p>Pages are built on the server with plain CSS and a little JavaScript. No build tools, nothing to compile, and they load instantly. Dark mode and phone layout are built in.</p>
+      <p class="alt">Instead of: React SPA (needs an API layer and a bundler, with no real gain for a single user).</p></div></details>
+    <details><summary>SQLite <span class="tag">database</span></summary><div class="body">
+      <p>One file (<code>data/outreach.db</code>), zero setup, easy to back up by copying it. Thousands of leads and emails are a tiny load for SQLite.</p>
+      <p class="alt">Instead of: Postgres/MySQL (a server to run for no benefit at this size). Switch if several people need to use it at once.</p></div></details>
+    <details><summary>Background threads <span class="tag">workers</span></summary><div class="body">
+      <p>Three lightweight threads handle scraping, bulk AI drafting and the send queue, so the UI never freezes. If the app is restarted, jobs pick up where they left off because their state lives in the database.</p>
+      <p class="alt">Instead of: Celery + Redis (extra services to install and run, overkill for one machine).</p></div></details>
+    <details><summary>Claude Opus 5.5 <span class="tag">AI model</span></summary><div class="body">
+      <p>Writes specific, human-sounding emails from lead data, extracts decision-makers from messy pages and plans target segments. Structured outputs guarantee clean JSON back, and automatic fallback covers rare refusals.</p>
+      <p class="alt">Effort is set to medium for writing and low for simple extraction, to keep costs down.</p></div></details>
+    <details><summary>Claude web search &amp; web fetch <span class="tag">discovery</span></summary><div class="body">
+      <p>Finds real businesses for each segment and looks up decision-makers on LinkedIn and directories, without you buying a separate lead database or maps API.</p>
+      <p class="alt">Instead of: Google Places / Apollo / Hunter (paid per lookup, extra accounts). Needs web search enabled in the Claude Console.</p></div></details>
+    <details><summary>requests + BeautifulSoup <span class="tag">scraper</span></summary><div class="body">
+      <p>Fast, simple crawling of up to 6 key pages per site. It detects 55+ chat/AI tools, ad pixels, booking tools and CRMs, including those loaded through Google Tag Manager, and decodes Cloudflare-protected emails.</p>
+      <p class="alt">Playwright is optional, only for sites that need JavaScript to show content. It respects robots.txt and never guesses email addresses.</p></div></details>
+    <details><summary>Rule-based score + AI writing <span class="tag">hybrid</span></summary><div class="body">
+      <p>The AI Need Score comes from transparent rules (no chat, paid ads, no booking, English-only…), so it is consistent and free. Claude only does the parts rules can't: reading context and writing.</p>
+      <p class="alt">This also means scraping still works, with signals and score, if the AI is switched off.</p></div></details>
+    <details><summary>Your own mailbox (SMTP / IMAP) <span class="tag">email</span></summary><div class="body">
+      <p>Emails come from your real Hostinger address, so replies land in your normal inbox and it looks like personal outreach. IMAP lets the app spot replies, bounces and "unsubscribe" automatically.</p>
+      <p class="alt">Instead of: SendGrid/Mailgun (marketing-style sending, extra cost, worse for 1-to-1 cold email). Falls back between ports 465 and 587.</p></div></details>
+    <details><summary>Queue with limits <span class="tag">deliverability</span></summary><div class="body">
+      <p>A daily cap, random 90–240 s gaps, same-thread follow-ups, List-Unsubscribe headers and auto-stop on reply protect your domain's reputation and keep you within UK, Canadian and UAE outreach rules.</p></div></details>
+    <details><summary>Excel in, Excel out <span class="tag">openpyxl</span></summary><div class="body">
+      <p>Your workbook stays the shared format: import it, work in the app, export statuses back into the same file. Scraped leads export in the same column layout.</p></div></details>
+    <details><summary>Local-first <span class="tag">deployment</span></summary><div class="body">
+      <p>Runs on your laptop, so there's no server bill and your leads and keys stay on your machine. Deploy it (with a password) only if you want open tracking or access from anywhere.</p></div></details>
+  </div>
+
+  <h2>What it costs</h2>
+  <p class="sub">Claude API is the only usage-based cost. Sending, scraping and reply tracking are free. Full editable model: <a href="Outreach_Agent_Costing.xlsx">Outreach_Agent_Costing.xlsx</a>.</p>
+  <div class="kpis">
+    <div class="kpi"><div class="v">~$0.30</div><div class="l">AI cost per usable new lead</div></div>
+    <div class="kpi"><div class="v">~$0.03</div><div class="l">per AI-written email</div></div>
+    <div class="kpi"><div class="v">~$40/mo</div><div class="l">standard use (150 new leads)</div></div>
+    <div class="kpi"><div class="v">$0</div><div class="l">hosting when run on your laptop</div></div>
+  </div>
+  <div class="costgrid">
+    <div class="tablewrap"><table>
+      <thead><tr><th>Operation</th><th class="num">In tokens</th><th class="num">Out tokens</th><th class="num">Searches</th><th class="num">Cost</th></tr></thead>
+      <tbody>
+        <tr><td>AI email draft</td><td class="num">2,500</td><td class="num">1,200</td><td class="num">–</td><td class="num">$0.034</td></tr>
+        <tr><td>AI follow-up draft</td><td class="num">3,000</td><td class="num">800</td><td class="num">–</td><td class="num">$0.028</td></tr>
+        <tr><td>Profile analysis</td><td class="num">12,000</td><td class="num">2,500</td><td class="num">–</td><td class="num">$0.098</td></tr>
+        <tr><td>Segment suggestions</td><td class="num">8,000</td><td class="num">5,000</td><td class="num">–</td><td class="num">$0.132</td></tr>
+        <tr><td>Business discovery (per segment)</td><td class="num">65,000</td><td class="num">5,500</td><td class="num">8</td><td class="num">$0.450</td></tr>
+        <tr><td>Scrape + AI enrichment (per site)</td><td class="num">8,000</td><td class="num">3,500</td><td class="num">–</td><td class="num">$0.102</td></tr>
+        <tr><td>Deep decision-maker search</td><td class="num">30,000</td><td class="num">2,500</td><td class="num">4</td><td class="num">$0.210</td></tr>
+      </tbody></table></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Per month</th><th class="num">Light</th><th class="num">Standard</th><th class="num">Heavy</th></tr></thead>
+      <tbody>
+        <tr><td>Segments × leads</td><td class="num">5 × 10</td><td class="num">15 × 10</td><td class="num">30 × 15</td></tr>
+        <tr><td>Business discovery</td><td class="num">$2.25</td><td class="num">$6.75</td><td class="num">$13.50</td></tr>
+        <tr><td>Scrape + enrichment</td><td class="num">$5.10</td><td class="num">$15.30</td><td class="num">$45.90</td></tr>
+        <tr><td>Deep searches</td><td class="num">$2.10</td><td class="num">$9.45</td><td class="num">$37.80</td></tr>
+        <tr><td>AI drafts &amp; follow-ups</td><td class="num">$1.70</td><td class="num">$7.90</td><td class="num">$24.80</td></tr>
+        <tr><td>Profile &amp; segments</td><td class="num">$0.36</td><td class="num">$0.63</td><td class="num">$1.26</td></tr>
+        <tr class="total"><td>Total (Claude API)</td><td class="num">$11.51</td><td class="num">$40.03</td><td class="num">$123.25</td></tr>
+        <tr><td>Usable new leads</td><td class="num">35</td><td class="num">105</td><td class="num">315</td></tr>
+      </tbody></table></div>
+  </div>
+  <p class="note">Prices: Claude Opus 5.5 at $4 per 1M input and $20 per 1M output tokens; web search at $10 per 1,000 searches. Token counts are estimates from the prompt sizes in the code, so check real usage in the Claude Console. Add your Hostinger plan price and optional hosting (~$4–7/month, only for open tracking) in the spreadsheet.</p>
+</main>
+<script>
+document.getElementById('openall').onclick = () => document.querySelectorAll('details').forEach(d => d.open = true);
+document.getElementById('closeall').onclick = () => document.querySelectorAll('details').forEach(d => d.open = false);
+</script>
+</body>
+</html>
