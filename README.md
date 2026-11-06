@@ -53,32 +53,26 @@ The three dots in the top bar (AI / Send / Inbox) turn green when each connectio
 
 ## 3. Lead Scraper agent
 
-Open **Lead Scraper** in the sidebar. For each website it:
+The scraper decides **who** to look for, so you don't paste websites. Open **Lead Scraper** in the sidebar:
 
-1. **Crawls** the home page plus the most useful contact / about / team pages (6 by default), and the site's Google Tag Manager container. It respects robots.txt and fetches one page at a time per site.
-2. **Collects** the following:
-   - published emails, including Cloudflare-protected ones (it never guesses addresses)
-   - the best email to use and its type (direct / general inbox / other staff)
-   - phone, WhatsApp, and company and personal LinkedIn
-   - people listed with their titles
-   - 55+ chat and AI-bot vendors
-   - Google, Meta, TikTok, Snapchat, LinkedIn and Microsoft ad pixels
-   - booking tools and CRM / practice software
-   - site languages, "24/7", "free consultation" and "no win no fee" claims, and portal profiles
-3. **Scores** each lead with an AI Need Score (0–100) and lists the evidence, using the same idea as your sheet: no instant reply, paid ads, no booking, English-only, high volume…
-4. **With Claude** (AI enrichment on), it also identifies the decision-maker and writes "Why they need AI", "How you can help", a personalised opener, a subject line and the 3-email sequence. **Deep search** looks up the owner or CEO on LinkedIn and the web when the site names nobody.
-5. **Skips** sites that already run an AI chatbot and companies already in your leads (optional).
+1. **Your profile.** Enter your website, your skills and services, and upload your resume (PDF, DOCX or TXT). Claude reads all three and writes a profile: headline, summary, services, skills, proof points and best-fit clients. It can also replace your "About me", which the email writer uses.
+2. **Target segments.** Click **Suggest segments for me**. Claude combines your profile with your past leads to suggest segments to target, e.g. "Abu Dhabi off-plan brokerages" or "Manchester immigration solicitors". It uses each past segment's lead count, how many were emailed, how many replied, average AI Need Score, and the leads that replied or scored highest. Each segment is labelled *proven*, *adjacent* or *new* and comes with a reason, the website signs to look for, and the offer to lead with. You can also tick **Lookalikes of my best leads**, or describe your own segment.
+3. **Find leads.** Choose how many leads per segment and click **Find leads**. For each segment, Claude searches the web for matching small and mid-size businesses, skipping chains, directories and companies you already have. The scraper then crawls each site and collects:
+   - the decision-maker and their title
+   - published emails (it never guesses addresses), plus phone, WhatsApp and LinkedIn
+   - chat / AI-bot tools, ad pixels, booking tools and CRM
+   - site languages
+   - an AI Need Score with evidence
 
-Review the results, then click **Add to leads**, or download them as `.xlsx`. The download uses the same columns as your lead workbook and can be imported again.
+   Claude then writes the pitch, opener and 3-email sequence. New leads go straight into your pipeline, or you can review them first.
 
-Command line (no web app needed):
+Results can also be downloaded as `.xlsx` in the same column layout as your lead workbook.
+
+Command line, for a list of sites you already have:
 
 ```bash
-.venv/bin/python scraper.py site1.com site2.ae --out leads.xlsx
 .venv/bin/python scraper.py --file urls.txt --ai --segment law --out law_leads.xlsx
 ```
-
-Tips: get website lists from Google Maps, Property Finder or Bayut broker pages, or legal directories, or use "Find businesses with AI". JavaScript-only sites: `pip install playwright && playwright install chromium`, then turn on "Render JavaScript sites".
 
 ## 4. Open tracking (optional)
 

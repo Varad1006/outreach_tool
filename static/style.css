@@ -259,3 +259,19 @@ details > summary::-webkit-details-marker { display: none; }
 .setup a:hover { border-color: var(--accent); text-decoration: none; }
 .setup .done { color: var(--ok); }
 .hide { display: none !important; }
+
+/* ---------- scraper targeting ---------- */
+.steps-row { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; font-size: 13px; flex-wrap: wrap; }
+.stepdot { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700;
+  background: var(--surface); border: 1px solid var(--line); color: var(--muted); }
+.stepdot.done { background: var(--ok); border-color: var(--ok); color: #fff; }
+.stepline { width: 36px; height: 1px; background: var(--line); }
+.seg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.seg-card { display: flex; gap: 12px; align-items: flex-start; padding: 14px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer;
+  background: var(--surface); transition: border-color .12s, box-shadow .12s, background .12s; }
+.seg-card:hover { border-color: var(--accent-2); }
+.seg-card:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); background: color-mix(in srgb, var(--accent-soft) 35%, var(--surface)); }
+.seg-card input { margin-top: 3px; }
+.src-proven { background: var(--ok-soft); color: var(--ok); } .src-adjacent { background: var(--info-soft); color: var(--info); }
+.src-new { background: var(--violet-soft); color: var(--violet); }
+.pr-high { background: var(--bad-soft); color: var(--bad); } .pr-medium { background: var(--warn-soft); color: var(--warn); } .pr-low { background: var(--surface-2); color: var(--muted); }

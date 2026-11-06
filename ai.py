@@ -1,4 +1,5 @@
 """Claude-powered drafting and lead research."""
+import base64
 import json
 import os
 
@@ -256,16 +257,102 @@ DISCOVER_SCHEMA = {
 }
 
 
-def discover_companies(query, count, exclude_domains=()):
+def discover_companies(query, count, exclude_domains=(), context=""):
     """Find candidate small/mid-size businesses (with their own website) matching a description."""
     excl = ", ".join(sorted(exclude_domains)[:150])
     report = _web_research(
         f"Find up to {count} small or mid-size businesses matching: {query}.\n"
-        "Rules: each must have its own website domain (not just a directory listing); skip national chains, "
+        + (f"Why they're a fit and what to look for:\n{context}\n" if context else "")
+        + "Rules: each must have its own website domain (not just a directory listing); skip national chains, "
         "franchises, big brands and directories/listicles; prefer firms that look busy (many listings, reviews, "
-        "or ads). For each, give the company name and its homepage URL.\n"
+        "or ads) and that do NOT already have an AI chatbot. For each, give the company name and its homepage URL.\n"
         + (f"Skip these domains, already in my list: {excl}" if excl else ""),
         searches=8, fetches=4)
     out = _json_call("Extract the businesses from this report as a list. Homepage URLs only. No directories.",
                      report, DISCOVER_SCHEMA, effort="low", max_tokens=6000)
     return out["companies"][:count]
+
+
+# ---------------------------------------------------------------- profile-driven targeting
+
+PROFILE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "headline": {"type": "string", "description": "One line: who the seller is and what they build"},
+        "summary": {"type": "string", "description": "3-4 sentences in the seller's voice, usable as 'About me' for emails"},
+        "services": {"type": "array", "items": {"type": "string"}, "description": "Concrete services they can sell"},
+        "skills": {"type": "array", "items": {"type": "string"}, "description": "Key technical skills / tools"},
+        "proof_points": {"type": "array", "items": {"type": "string"}, "description": "Projects, results, credentials"},
+        "best_fit_clients": {"type": "array", "items": {"type": "string"}, "description": "Kinds of businesses that need these skills most"},
+    },
+    "required": ["headline", "summary", "services", "skills", "proof_points", "best_fit_clients"],
+    "additionalProperties": False,
+}
+
+
+def analyze_profile(website_text, resume_text, resume_pdf, skills, about_me):
+    """Turn the seller's website, resume and skills into a structured profile."""
+    content = []
+    if resume_pdf:
+        content.append({"type": "document", "source": {"type": "base64", "media_type": "application/pdf",
+                                                        "data": base64.b64encode(resume_pdf).decode()}})
+    text = "\n\n".join(part for part in [
+        "Build a sales profile for this freelancer / small agency selling AI automation services. Use only what "
+        "the sources say; don't invent clients or results.",
+        f"Skills they listed:\n{skills}" if skills else "",
+        f"Their current 'About me':\n{about_me}" if about_me else "",
+        f"Resume text:\n{resume_text[:15000]}" if resume_text else ("Resume: attached PDF." if resume_pdf else ""),
+        f"Their website (crawled pages):\n{website_text[:15000]}" if website_text else "",
+    ] if part)
+    content.append({"type": "text", "text": text})
+    resp = _create(model=MODEL, max_tokens=6000, output_config={"effort": "low", "format": {"type": "json_schema", "schema": PROFILE_SCHEMA}},
+                   messages=[{"role": "user", "content": content}])
+    try:
+        return json.loads(_text(resp))
+    except ValueError as e:
+        raise AIError("Claude returned an unexpected format. Try again.") from e
+
+
+TARGETING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "strategy": {"type": "string", "description": "2-3 sentences: where to focus next and why, citing the lead data"},
+        "segments": {"type": "array", "items": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Short label, e.g. 'Abu Dhabi off-plan brokerages'"},
+                "search_query": {"type": "string", "description": "What to search for: business type + size + place"},
+                "location": {"type": "string"},
+                "industry_key": {"type": "string", "enum": ["dubai", "law", "other"],
+                                 "description": "dubai = real estate in the UAE, law = law firms, other = anything else"},
+                "source": {"type": "string", "enum": ["proven", "adjacent", "new"],
+                           "description": "proven = already in the lead data, adjacent = close to it, new = fresh idea from the profile"},
+                "priority": {"type": "string", "enum": ["high", "medium", "low"]},
+                "why_fit": {"type": "string", "description": "Why this segment needs the seller's skills, 1-2 sentences"},
+                "signals": {"type": "array", "items": {"type": "string"}, "description": "Website signs that a business needs help"},
+                "pitch_angle": {"type": "string", "description": "The one offer to lead with"},
+            },
+            "required": ["name", "search_query", "location", "industry_key", "source", "priority", "why_fit",
+                         "signals", "pitch_angle"],
+            "additionalProperties": False}},
+    },
+    "required": ["strategy", "segments"],
+    "additionalProperties": False,
+}
+
+
+def build_targeting(profile, lead_stats, best_examples, n=8):
+    """Suggest target segments from the seller's profile and what their past leads show."""
+    system = ("You are a B2B prospecting strategist for a solo AI automation engineer. Recommend specific, "
+              "searchable customer segments (business type + size + place) where small and mid-size businesses "
+              "visibly need the seller's skills. Ground every recommendation in the profile and lead data given. "
+              "Rank by expected reply rate and deal value. Prefer segments with many independent businesses that "
+              "have their own websites.")
+    prompt = "\n".join([
+        f"Suggest {n} target segments: include the best proven segments from the lead data (if any did well), "
+        "adjacent segments (same pain, nearby city or similar industry) and a few new ones that fit the profile.",
+        "", "Seller profile (JSON):", json.dumps(profile, ensure_ascii=False)[:6000],
+        "", "Past leads by segment (JSON: leads, contacted, replied, avg score):", json.dumps(lead_stats, ensure_ascii=False)[:6000],
+        "", "Examples of the best past leads (replied, or highest AI Need Score):", json.dumps(best_examples, ensure_ascii=False)[:5000],
+    ])
+    return _json_call(system, prompt, TARGETING_SCHEMA, effort="medium", max_tokens=12000)

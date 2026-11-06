@@ -39,6 +39,8 @@ DEFAULT_SETTINGS = {
     "track_opens": "0",
     "public_url": "",
     "queue_paused": "0",
+    "profile_website": "https://www.varad-tech.site",
+    "profile_skills": "",
 }
 
 

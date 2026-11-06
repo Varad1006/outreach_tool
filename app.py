@@ -654,7 +654,7 @@ def run_scrape_job(job_id):
             conn.execute("UPDATE scrape_jobs SET status='discovering' WHERE id=?", (job_id,))
             skip = known_domains(conn)
         try:
-            found = ai.discover_companies(job["query"], int(opts.get("count", 15)), skip)
+            found = ai.discover_companies(job["query"], int(opts.get("count", 15)), skip, opts.get("context", ""))
         except Exception as e:  # noqa: BLE001
             with db.tx() as conn:
                 conn.execute("UPDATE scrape_jobs SET status='failed', error=?, finished_at=? WHERE id=?",
@@ -730,55 +730,174 @@ def scraper_loop():
                     conn.execute("UPDATE scrape_jobs SET status='failed', error=? WHERE id=?", (str(e), job["id"]))
 
 
+# ---- profile-driven targeting (what to scrape is decided from your profile + past leads)
+
+POSITIVE = ("Replied", "Call booked", "Proposal sent", "Won")
+
+
+def lead_stats(conn):
+    """Past leads grouped by segment: volume, outreach, replies, average AI Need Score."""
+    rows = conn.execute(
+        "SELECT CASE WHEN sheet_name='Scraped' THEN COALESCE(NULLIF(practice_area,''),'Scraped') "
+        "            WHEN segment='dubai' THEN 'Dubai real estate brokerages' "
+        "            WHEN segment='law' THEN 'Law firms: ' || COALESCE(NULLIF(practice_area,''),'general') ELSE sheet_name END AS seg, "
+        "COALESCE(NULLIF(country,''), CASE WHEN segment='dubai' THEN 'UAE' ELSE '' END) AS country, "
+        "COUNT(*) AS leads, ROUND(AVG(score)) AS avg_score, "
+        "SUM(CASE WHEN status<>'Not contacted' THEN 1 ELSE 0 END) AS contacted, "
+        f"SUM(CASE WHEN status IN {POSITIVE} THEN 1 ELSE 0 END) AS replied, "
+        "SUM(CASE WHEN status IN ('Bounced','Not interested') THEN 1 ELSE 0 END) AS negative "
+        "FROM leads GROUP BY seg, country ORDER BY replied DESC, leads DESC LIMIT 30").fetchall()
+    return [dict(r) for r in rows]
+
+
+def best_examples(conn, n=12):
+    rows = conn.execute(
+        "SELECT company, practice_area, country, city, score, status, substr(evidence, 1, 160) AS why FROM leads "
+        f"ORDER BY CASE WHEN status IN {POSITIVE} THEN 0 ELSE 1 END, score DESC LIMIT ?", (n,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def read_resume(upload):
+    """Return (text, pdf_bytes) from an uploaded resume (.pdf, .docx, .txt/.md)."""
+    name = (upload.filename or "").lower()
+    data = upload.read()
+    if name.endswith(".pdf"):
+        return "", data
+    if name.endswith(".docx"):
+        import io
+        import zipfile
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            xml = z.read("word/document.xml").decode("utf-8", "replace")
+        xml = re.sub(r"</w:p>", "\n", xml)
+        return re.sub(r"<[^>]+>", "", xml), None
+    return data.decode("utf-8", "replace"), None
+
+
+@app.post("/scraper/profile")
+def scraper_profile():
+    s = db.get_settings()
+    website = request.form.get("profile_website", "").strip()
+    skills = request.form.get("profile_skills", "").strip()
+    db.set_setting("profile_website", website)
+    db.set_setting("profile_skills", skills)
+    resume_path = os.path.join(db.DATA_DIR, "resume.pdf")
+    resume_text, resume_pdf = s.get("profile_resume_text", ""), None
+    up = request.files.get("resume")
+    if up and up.filename:
+        try:
+            resume_text, resume_pdf = read_resume(up)
+        except Exception as e:  # noqa: BLE001
+            flash(f"Couldn't read that resume ({e}). Use PDF, DOCX or TXT.", "error")
+            return redirect(url_for("scraper_page"))
+        if resume_pdf:
+            with open(resume_path, "wb") as f:
+                f.write(resume_pdf)
+            resume_text = ""
+        elif os.path.exists(resume_path):
+            os.remove(resume_path)
+        db.set_setting("profile_resume_text", resume_text[:20000])
+        db.set_setting("profile_resume_name", up.filename)
+    elif os.path.exists(resume_path):
+        with open(resume_path, "rb") as f:
+            resume_pdf = f.read()
+    if not ai.configured():
+        flash("Saved. Add ANTHROPIC_API_KEY to .env so Claude can analyse your profile.", "error")
+        return redirect(url_for("scraper_page"))
+    site_text = ""
+    if website:
+        try:
+            site_text = scraper.crawl(website, max_pages=6).get("page_text", "")
+        except Exception:  # noqa: BLE001 - the website is optional context
+            site_text = ""
+    try:
+        prof = ai.analyze_profile(site_text, resume_text, resume_pdf, skills, s.get("about_me", ""))
+    except ai.AIError as e:
+        flash(str(e), "error")
+        return redirect(url_for("scraper_page"))
+    db.set_setting("profile_json", json.dumps(prof, ensure_ascii=False))
+    if request.form.get("update_about") and prof.get("summary"):
+        db.set_setting("about_me", prof["summary"] + ("\nServices: " + "; ".join(prof["services"]) if prof.get("services") else ""))
+    flash("Profile analysed." + ("" if site_text or not website else " (Your website couldn't be read, so it was skipped.)")
+          + " Now get target suggestions.")
+    return redirect(url_for("scraper_page") + "#targets")
+
+
+@app.post("/scraper/targets")
+def scraper_targets():
+    s = db.get_settings()
+    if not ai.configured():
+        flash("Add ANTHROPIC_API_KEY to .env to get target suggestions.", "error")
+        return redirect(url_for("scraper_page"))
+    profile = json.loads(s.get("profile_json") or "{}") or {"about_me": s.get("about_me", ""), "skills": s.get("profile_skills", "")}
+    with db.tx() as conn:
+        stats, examples = lead_stats(conn), best_examples(conn)
+    try:
+        plan = ai.build_targeting(profile, stats, examples)
+    except ai.AIError as e:
+        flash(str(e), "error")
+        return redirect(url_for("scraper_page"))
+    plan["generated_at"] = db.now_iso()
+    db.set_setting("targeting_plan", json.dumps(plan, ensure_ascii=False))
+    flash(f"{len(plan['segments'])} target segments suggested. Tick the ones you want and click Find leads.")
+    return redirect(url_for("scraper_page") + "#targets")
+
+
 @app.route("/scraper", methods=["GET", "POST"])
 def scraper_page():
+    s = db.get_settings()
+    plan = json.loads(s.get("targeting_plan") or "{}")
     if request.method == "POST":
-        mode = request.form.get("mode", "urls")
-        opts = {k: bool(request.form.get(k)) for k in ("use_ai", "deep", "exclude_ai", "skip_known", "auto_add",
-                                                        "render_js", "ignore_robots")}
-        opts.update(pages=max(1, min(15, int(request.form.get("pages") or 6))),
-                    count=max(1, min(50, int(request.form.get("count") or 15))))
-        segment = request.form.get("segment", "other")
-        if mode == "urls":
-            urls = []
-            for line in re.split(r"[\n,]+", request.form.get("urls", "")):
-                line = line.strip()
-                if line and "." in line and not line.startswith("#"):
-                    urls.append(line)
-            urls = list(dict.fromkeys(urls))[:500]
-            if not urls:
-                flash("Paste at least one website.", "error")
-                return redirect(url_for("scraper_page"))
-            name = request.form.get("name") or f"{len(urls)} website(s)"
-            query = ""
-        else:
-            query = request.form.get("query", "").strip()
-            if not query:
-                flash("Describe the businesses to find.", "error")
-                return redirect(url_for("scraper_page"))
-            if not ai.configured():
-                flash("Finding businesses needs Claude: add ANTHROPIC_API_KEY to .env. Or paste websites instead.", "error")
-                return redirect(url_for("scraper_page"))
-            name = request.form.get("name") or query
-            urls = []
-        if opts["use_ai"] and not ai.configured():
-            flash("AI enrichment is off because ANTHROPIC_API_KEY isn't set. Scraping will still collect contacts and signals.", "error")
+        if not ai.configured():
+            flash("Finding leads needs Claude: add ANTHROPIC_API_KEY to .env.", "error")
+            return redirect(url_for("scraper_page"))
+        opts = {k: bool(request.form.get(k)) for k in ("deep", "exclude_ai", "skip_known", "auto_add", "render_js")}
+        opts.update(use_ai=True, pages=6, count=max(1, min(40, int(request.form.get("count") or 10))))
+        segs = plan.get("segments", [])
+        chosen = [segs[int(i)] for i in request.form.getlist("seg") if i.isdigit() and int(i) < len(segs)]
+        custom = request.form.get("custom", "").strip()
+        if custom:
+            chosen.append({"name": custom[:80], "search_query": custom, "location": "", "industry_key": "other",
+                           "why_fit": "", "signals": [], "pitch_angle": ""})
+        if request.form.get("lookalike"):
+            with db.tx() as conn:
+                ex = best_examples(conn, 8)
+            if ex:
+                names = "; ".join(f"{e['company']} ({e['practice_area'] or ''} {e['city'] or e['country'] or ''})".strip() for e in ex)
+                chosen.append({"name": "Lookalikes of my best leads",
+                               "search_query": "businesses similar to these (same industry, size and region): " + names,
+                               "location": "", "industry_key": "other",
+                               "why_fit": "They match the leads that replied or scored highest.", "signals": [], "pitch_angle": ""})
+        if not chosen:
+            flash("Tick at least one target segment (or describe one).", "error")
+            return redirect(url_for("scraper_page") + "#targets")
+        prof = json.loads(s.get("profile_json") or "{}")
+        first = None
         with db.tx() as conn:
-            cur = conn.execute("INSERT INTO scrape_jobs (name, segment, mode, query, options, status, total, created_at) "
-                               "VALUES (?,?,?,?,?,'pending',?,?)",
-                               (name[:120], segment, mode, query, json.dumps(opts), len(urls), db.now_iso()))
-            jid = cur.lastrowid
-            for u in urls:
-                conn.execute("INSERT INTO scrape_results (job_id, url, status, created_at) VALUES (?,?,'pending',?)",
-                             (jid, u, db.now_iso()))
-        flash("Scraper started. Results appear below as each site finishes.")
-        return redirect(url_for("scrape_job_page", job_id=jid))
+            for seg in chosen:
+                ctx = "\n".join(x for x in [
+                    seg.get("why_fit", ""),
+                    ("Signs they need help: " + ", ".join(seg.get("signals", []))) if seg.get("signals") else "",
+                    ("Offer: " + seg["pitch_angle"]) if seg.get("pitch_angle") else "",
+                    ("Seller: " + prof.get("headline", "")) if prof.get("headline") else "",
+                ] if x)
+                o = dict(opts, context=ctx)
+                query = seg["search_query"] + (f" in {seg['location']}" if seg.get("location") and seg["location"].lower() not in seg["search_query"].lower() else "")
+                cur = conn.execute("INSERT INTO scrape_jobs (name, segment, mode, query, options, status, total, created_at) "
+                                   "VALUES (?,?,'discover',?,?,'pending',0,?)",
+                                   (seg["name"][:120], seg.get("industry_key", "other"), query, json.dumps(o), db.now_iso()))
+                first = first or cur.lastrowid
+        flash(f"Started {len(chosen)} lead search{'es' if len(chosen) > 1 else ''}. Claude finds the businesses, then each website is scraped.")
+        return redirect(url_for("scrape_job_page", job_id=first) if len(chosen) == 1 else url_for("scraper_page") + "#jobs")
     with db.tx() as conn:
         jobs = conn.execute(
             "SELECT j.*, (SELECT COUNT(*) FROM scrape_results r WHERE r.job_id=j.id AND r.status='ok') AS ok, "
             "(SELECT COUNT(*) FROM scrape_results r WHERE r.job_id=j.id AND r.lead_id IS NOT NULL) AS added "
             "FROM scrape_jobs j ORDER BY j.id DESC LIMIT 50").fetchall()
-    return render_template("scraper.html", jobs=jobs)
+        stats = lead_stats(conn)
+        has_leads = conn.execute("SELECT COUNT(*) FROM leads").fetchone()[0] > 0
+    return render_template("scraper.html", jobs=jobs, s=s, plan=plan, stats=stats[:6], has_leads=has_leads,
+                           profile=json.loads(s.get("profile_json") or "{}"),
+                           has_resume=os.path.exists(os.path.join(db.DATA_DIR, "resume.pdf")) or bool(s.get("profile_resume_text")))
 
 
 @app.route("/scraper/<int:job_id>")
