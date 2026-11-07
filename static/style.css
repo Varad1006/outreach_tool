@@ -271,7 +271,14 @@ details > summary::-webkit-details-marker { display: none; }
   background: var(--surface); transition: border-color .12s, box-shadow .12s, background .12s; }
 .seg-card:hover { border-color: var(--accent-2); }
 .seg-card:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); background: color-mix(in srgb, var(--accent-soft) 35%, var(--surface)); }
-.seg-card input { margin-top: 3px; }
+.seg-card input { margin-top: 3px; flex: none; }
+.seg-card > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.seg-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 6px 10px; }
+.seg-head b { flex: 1 1 180px; min-width: 0; line-height: 1.35; }
+.seg-head .pills { display: flex; gap: 4px; flex: none; }
+.seg-card .chips .chip { white-space: normal; text-align: left; line-height: 1.35; }
+.seg-card .why { font-size: 13px; color: var(--ink-2); margin-top: 6px; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.seg-card:has(input:checked) .why, .seg-card:hover .why { -webkit-line-clamp: unset; }
 .src-proven { background: var(--ok-soft); color: var(--ok); } .src-adjacent { background: var(--info-soft); color: var(--info); }
 .src-new { background: var(--violet-soft); color: var(--violet); }
 .pr-high { background: var(--bad-soft); color: var(--bad); } .pr-medium { background: var(--warn-soft); color: var(--warn); } .pr-low { background: var(--surface-2); color: var(--muted); }
