@@ -31,7 +31,8 @@ The first run creates a `.env` file. Open it and fill in the following:
 | `ANTHROPIC_API_KEY` | https://console.anthropic.com → API Keys |
 | `SMTP_USER` / `FROM_EMAIL` | The mailbox you send from (ideally your business domain, not @gmail.com) |
 | `SMTP_PASSWORD` | Google Workspace/Gmail: turn on 2-Step Verification, then create an **App Password** at https://myaccount.google.com/apppasswords. Use that 16-character password, not your normal one. |
-| `IMAP_HOST` | Leave as `imap.gmail.com` for Gmail/Workspace (turn on IMAP in Gmail settings → Forwarding and POP/IMAP) |
+| `IMAP_HOST` | Hostinger: `imap.hostinger.com`. Also used to save a copy of every sent email in your Sent folder, so it shows in your mail app. |
+| `IMAP_HOST` (Gmail) | Leave as `imap.gmail.com` for Gmail/Workspace (turn on IMAP in Gmail settings → Forwarding and POP/IMAP) |
 
 Then run `./run.sh` again and open **http://127.0.0.1:5050**.
 

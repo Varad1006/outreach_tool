@@ -7,6 +7,7 @@ import os
 import re
 import smtplib
 import ssl
+import time
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid, parseaddr
@@ -168,7 +169,66 @@ def send_email(em, lead, settings):
     msg.add_alternative(compose_html(em["body"], settings, lead, pixel), subtype="html")
 
     _smtp_deliver(c, msg)
+    SENT_COPY["last"] = None
+    try:
+        SENT_COPY["last"] = ("ok", save_to_sent(msg))
+    except Exception as e:  # noqa: BLE001 - the email itself was sent; a missing copy must not fail the send
+        SENT_COPY["last"] = ("error", str(e))
     return msg["Message-ID"]
+
+
+# ------------------------------------------------------------------ copy sent emails into the mailbox's Sent folder
+
+SENT_COPY = {"last": None}  # result of the last copy attempt: ("ok", folder|None) or ("error", message)
+AUTO_SAVING_HOSTS = ("gmail", "googlemail", "office365", "outlook")  # these already file SMTP mail in Sent
+
+
+def _find_sent_folder(imap):
+    override = os.environ.get("SENT_FOLDER", "").strip()
+    if override:
+        return override
+    typ, data = imap.list()
+    names = []
+    for raw in data or []:
+        line = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+        m = re.match(r'\((?P<flags>[^)]*)\)\s+(?:"[^"]*"|NIL)\s+(?P<name>.+)$', line)
+        if not m:
+            continue
+        name = m.group("name").strip().strip('"')
+        if "\\sent" in m.group("flags").lower():
+            return name  # the server marks its Sent folder (RFC 6154)
+        names.append(name)
+    lower = {n.lower(): n for n in names}
+    for cand in ("inbox.sent", "sent", "sent items", "sent messages", "inbox/sent", "sent mail"):
+        if cand in lower:
+            return lower[cand]
+    return next((n for n in names if "sent" in n.lower()), None)
+
+
+def save_to_sent(msg):
+    """Put a copy of a sent email in the mailbox's Sent folder over IMAP, so it shows in your mail app.
+    Returns the folder name, or None when skipped (provider files it already, or IMAP isn't set up)."""
+    c = cfg()
+    if os.environ.get("SAVE_TO_SENT", "1") == "0" or not imap_configured():
+        return None
+    if any(h in c["smtp_host"].lower() for h in AUTO_SAVING_HOSTS):
+        return None
+    imap = imaplib.IMAP4_SSL(c["imap_host"], c["imap_port"], timeout=30)
+    try:
+        imap.login(c["imap_user"], c["imap_password"])
+        folder = _find_sent_folder(imap)
+        if not folder:
+            raise RuntimeError("couldn't find a Sent folder (set SENT_FOLDER in .env)")
+        quoted = '"' + folder.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        typ, resp = imap.append(quoted, "(\\Seen)", imaplib.Time2Internaldate(time.time()), msg.as_bytes())
+        if typ != "OK":
+            raise RuntimeError(f"{c['imap_host']} refused the copy: {resp}")
+        return folder
+    finally:
+        try:
+            imap.logout()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _smtp_hint(host):

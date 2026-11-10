@@ -181,6 +181,11 @@ def deliver(email_id):
                       mailer.compose_body(em["body"], settings, lead), db.now_iso(), email_id))
         if lead["status"] not in db.STOP_STATUSES:
             db.set_status(conn, lead["id"], db.STEP_STATUS[em["step"]], "sent")
+        copy = mailer.SENT_COPY.get("last")
+        if copy and copy[0] == "error":
+            db.add_event(conn, lead["id"], "error", f"Sent, but no copy was saved to your Sent folder: {copy[1]}", email_id)
+    if copy and copy[0] == "error":
+        return True, f"Sent to {em['to_email']}, but no copy was saved to your Sent folder: {copy[1]}"
     return True, f"Sent to {em['to_email']}."
 
 
@@ -1039,7 +1044,10 @@ def settings_test():
     to = request.form.get("to") or mailer.cfg()["from_email"]
     try:
         mailer.send_test(to, db.get_settings())
-        flash(f"Test email sent to {to}.")
+        copy = mailer.SENT_COPY.get("last")
+        note = (f" A copy is in your '{copy[1]}' folder." if copy and copy[0] == "ok" and copy[1] else
+                f" But the copy for your Sent folder failed: {copy[1]}" if copy and copy[0] == "error" else "")
+        flash(f"Test email sent to {to}.{note}", "error" if copy and copy[0] == "error" else None)
     except Exception as e:  # noqa: BLE001
         flash(f"Test failed: {e}", "error")
     return redirect(url_for("settings_page"))
