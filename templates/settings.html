@@ -9,7 +9,21 @@
       <div><label class="field">Sender name</label><input type="text" name="sender_name" value="{{ s.sender_name }}"></div>
       <div><label class="field">Postal address <span class="muted">(required for Canada / CASL)</span></label><input type="text" name="postal_address" value="{{ s.postal_address }}"></div>
     </div>
-    <label class="field">Signature</label><textarea name="signature" style="min-height:56px">{{ s.signature }}</textarea>
+    <div class="row" style="justify-content:space-between;align-items:flex-end">
+      <label class="field" for="sig">Signature</label>
+      <button type="button" class="sm" id="linkbtn">{{ icon('external') }} Add link</button>
+    </div>
+    <textarea name="signature" id="sig" style="min-height:56px">{{ s.signature }}</textarea>
+    <div class="linkbox hide" id="linkbox">
+      <div class="grid g2" style="gap:8px 12px">
+        <div><label class="field" style="margin-top:0">Text to show</label><input type="text" id="ltext" placeholder="varad-tech.site"></div>
+        <div><label class="field" style="margin-top:0">Link (URL)</label><input type="url" id="lurl" placeholder="https://www.varad-tech.site"></div>
+      </div>
+      <div class="row" style="margin-top:10px"><button type="button" class="primary sm" id="linsert">Insert link</button><button type="button" class="ghost sm" id="lcancel">Cancel</button>
+        <span class="hint" style="margin:0">Tip: select text in the signature first to turn it into a link.</span></div>
+    </div>
+    <div class="sigprev"><span class="tiny muted">Preview, as recipients see it</span><div id="sigprev"></div></div>
+    <div class="hint">Links are written as <code>[text](https://…)</code>. Plain web and email addresses in the signature become links automatically.</div>
     <label class="field">Opt-out line</label><input type="text" name="opt_out_line" value="{{ s.opt_out_line }}">
     <label class="field">About you &amp; your services</label><textarea name="about_me" style="min-height:150px">{{ s.about_me }}</textarea>
     <div class="hint">Claude uses this when writing emails and pitching scraped leads, so make it specific.</div>
@@ -43,3 +57,42 @@
 </div>
 </div>
 {% endblock %}
+{% block scripts %}<script>
+(() => {
+  const sig = document.getElementById('sig'), box = document.getElementById('linkbox'), prev = document.getElementById('sigprev');
+  const lt = document.getElementById('ltext'), lu = document.getElementById('lurl');
+  const esc = t => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const A = (h, t) => `<a href="${h.replace(/"/g, '%22')}" target="_blank" rel="noopener">${t}</a>`;
+  function render(text) {
+    const keep = []; const hold = h => `\u0000${keep.push(h) - 1}\u0000`;
+    let h = esc(text);
+    h = h.replace(/\[([^\]\n]+)\]\(((?:https?:\/\/|mailto:)[^\s)]+)\)/g, (_, t, u) => hold(A(u, t)));
+    h = h.replace(/https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"]/g, u => hold(A(u, u)));
+    h = h.replace(/(^|[^\w.+-])([\w.+-]+@[\w-]+(?:\.[\w-]+)+)/g, (_, p, e) => p + hold(A('mailto:' + e, e)));
+    h = h.replace(/(^|[^@\/\w.-])((?:www\.)?[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:com|site|ai|io|co|net|org|in|ae|uk|ca|dev|app|tech|agency|me|xyz|info|biz|us|eu|online|store|studio|digital|solutions|consulting|services)(?:\/[^\s<]*)?)(?![\w-])/gi,
+      (_, p, d) => p + hold(A('https://' + d, d)));
+    return h.replace(/\u0000(\d+)\u0000/g, (_, i) => keep[+i]).replace(/\n/g, '<br>');
+  }
+  const upd = () => prev.innerHTML = render(sig.value || '') || '<span class="muted">Empty</span>';
+  sig.addEventListener('input', upd); upd();
+  let sel = [0, 0];
+  document.getElementById('linkbtn').onclick = () => {
+    sel = [sig.selectionStart, sig.selectionEnd];
+    const picked = sig.value.slice(sel[0], sel[1]).trim();
+    lt.value = picked;
+    lu.value = /^[\w.-]+\.[a-z]{2,}(\/.*)?$/i.test(picked) ? 'https://' + picked : (/^https?:\/\//.test(picked) ? picked : '');
+    box.classList.remove('hide'); (picked ? lu : lt).focus();
+  };
+  document.getElementById('lcancel').onclick = () => box.classList.add('hide');
+  [lt, lu].forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); document.getElementById('linsert').click(); } }));
+  document.getElementById('linsert').onclick = () => {
+    let url = lu.value.trim(); const text = lt.value.trim() || url;
+    if (!url) { lu.focus(); return; }
+    if (!/^(https?:\/\/|mailto:)/i.test(url)) url = (url.includes('@') ? 'mailto:' : 'https://') + url;
+    const md = `[${text.replace(/[\[\]]/g, '')}](${url})`;
+    sig.value = sig.value.slice(0, sel[0]) + md + sig.value.slice(sel[1]);
+    sig.focus(); sig.setSelectionRange(sel[0] + md.length, sel[0] + md.length);
+    box.classList.add('hide'); upd();
+  };
+})();
+</script>{% endblock %}

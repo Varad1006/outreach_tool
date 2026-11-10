@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
+from markupsafe import Markup
 from flask import (Flask, Response, abort, flash, jsonify, redirect, render_template, request, send_file,
                    url_for)
 
@@ -387,7 +388,7 @@ def lead_page(lead_id):
     pos = ids.index(lead_id) if lead_id in ids else 0
     nav = {"prev": ids[pos - 1] if pos > 0 else None, "next": ids[pos + 1] if pos + 1 < len(ids) else None}
     s = db.get_settings()
-    preview_footer = mailer.footer(s, lead)
+    preview_footer = Markup(mailer.footer_html(s, lead))
     return render_template("lead.html", lead=lead, emails=emails, events=events, step=step, draft=draft,
                            block=block, nav=nav, preview_footer=preview_footer, s=s)
 

@@ -68,17 +68,71 @@ def strip_signature(body):
     return text.rstrip()
 
 
+# Links: write [text](https://url) anywhere in an email or the signature. In the signature/footer, plain web
+# addresses (varad-tech.site) and email addresses also become clickable.
+MD_LINK = re.compile(r"\[([^\]\n]+)\]\(((?:https?://|mailto:)[^\s)]+)\)")
+URL_RE = re.compile(r"https?://[^\s<>()]+[^\s<>().,;:!?'\"]")
+EMAIL_RE_LINK = re.compile(r"(?<![\w.+-])([\w.+-]+@[\w-]+(?:\.[\w-]+)+)")
+DOMAIN_RE = re.compile(
+    r"(?<![@/\w.-])((?:www\.)?[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:com|site|ai|io|co|net|org|in|ae|uk|ca|dev|app|"
+    r"tech|agency|me|xyz|info|biz|us|eu|online|store|studio|digital|solutions|consulting|services)"
+    r"(?:/[^\s<]*)?)(?![\w-])", re.I)
+
+
+def _norm_url(u):
+    u = re.sub(r"^(https?://|mailto:)", "", u.strip().lower())
+    return u.removeprefix("www.").rstrip("/")
+
+
+def plain_links(text):
+    """Markdown links -> readable plain text: 'text (url)', or just the text when it already is the address."""
+    def rep(m):
+        t, u = m.group(1), m.group(2)
+        return t if _norm_url(t) == _norm_url(u) else f"{t} ({u.removeprefix('mailto:')})"
+    return MD_LINK.sub(rep, text)
+
+
+def _link_html(escaped, domains=False):
+    """Turn links in already-HTML-escaped text into <a> tags (markdown links, URLs, and optionally domains/emails)."""
+    keep = []
+
+    def hold(html_snippet):
+        keep.append(html_snippet)
+        return f"\x00{len(keep) - 1}\x00"
+
+    a = 'style="color:#1a56db;text-decoration:underline"'
+    q = lambda u: u.replace('"', "%22")  # noqa: E731 - keep hrefs inside their quotes
+    escaped = MD_LINK.sub(lambda m: hold(f'<a href="{q(m.group(2))}" {a}>{m.group(1)}</a>'), escaped)
+    escaped = URL_RE.sub(lambda m: hold(f'<a href="{q(m.group(0))}" {a}>{m.group(0)}</a>'), escaped)
+    if domains:
+        escaped = EMAIL_RE_LINK.sub(lambda m: hold(f'<a href="mailto:{m.group(1)}" {a}>{m.group(1)}</a>'), escaped)
+        escaped = DOMAIN_RE.sub(lambda m: hold(f'<a href="https://{m.group(1)}" {a}>{m.group(1)}</a>'), escaped)
+    return re.sub(r"\x00(\d+)\x00", lambda m: keep[int(m.group(1))], escaped)
+
+
+def _paras(text, domains=False):
+    out = []
+    for p in text.split("\n\n"):
+        if p.strip():
+            out.append(f'<p style="margin:0 0 12px">{_link_html(html.escape(p, quote=False), domains).replace(chr(10), "<br>")}</p>')
+    return "".join(out)
+
+
+def footer_html(settings, lead):
+    """The signature block as HTML, for previews in the app."""
+    return _link_html(html.escape(footer(settings, lead), quote=False), True).replace("\n", "<br>")
+
+
 def compose_body(body, settings, lead):
-    return strip_signature(body) + "\n\n" + footer(settings, lead)
+    """Plain-text version of the email (used for the text/plain part and the app's history)."""
+    return plain_links(strip_signature(body) + "\n\n" + footer(settings, lead))
 
 
-def _html(text, pixel_url=None):
-    esc = html.escape(text)
-    esc = re.sub(r"(https?://[^\s<]+)", r'<a href="\1">\1</a>', esc)
-    paras = "".join(f"<p style=\"margin:0 0 12px\">{p.replace(chr(10), '<br>')}</p>" for p in esc.split("\n\n"))
+def compose_html(body, settings, lead, pixel_url=None):
     pixel = f'<img src="{pixel_url}" width="1" height="1" alt="" style="display:block;border:0">' if pixel_url else ""
+    sig = _paras(footer(settings, lead), domains=True)
     return (f'<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#222">'
-            f"{paras}{pixel}</div>")
+            f"{_paras(strip_signature(body))}{sig}{pixel}</div>")
 
 
 def send_email(em, lead, settings):
@@ -108,7 +162,7 @@ def send_email(em, lead, settings):
         unsub.insert(0, f"<{public}/u/{em['token']}>")
     msg["List-Unsubscribe"] = ", ".join(unsub)
     msg.set_content(full_body)
-    msg.add_alternative(_html(full_body, pixel), subtype="html")
+    msg.add_alternative(compose_html(em["body"], settings, lead, pixel), subtype="html")
 
     _smtp_deliver(c, msg)
     return msg["Message-ID"]
