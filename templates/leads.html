@@ -8,6 +8,7 @@
     <a class="btn" href="{{ url_for('scraper_page') }}">{{ icon('radar') }} Scrape more</a>
   </div>
 </div>
+{% if f.view == 'drafts' %}<div class="callout info">{{ icon('sparkles') }}<div>Need the same change in every draft? Set it once in <a href="{{ url_for('settings_page') }}#rules">Rules for every email</a> and apply it to all drafts.</div></div>{% endif %}
 <div class="tabs">
   {% for v, label in [('', 'All'), ('dubai', 'Dubai real estate'), ('law', 'Law firms'), ('scraped', 'Scraped')] %}
   <a href="{{ url_for('leads_page', seg=v, view=f.view) }}" class="{{ 'active' if f.seg == v }}">{{ label }}<span class="n">{{ counts[v] }}</span></a>{% endfor %}

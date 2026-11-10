@@ -41,6 +41,8 @@ DEFAULT_SETTINGS = {
     "queue_paused": "0",
     "profile_website": "https://www.varad-tech.site",
     "profile_skills": "",
+    "email_addition": "",
+    "email_rules": "",
 }
 
 

@@ -44,6 +44,7 @@ def imap_configured():
 
 
 def footer(settings, lead):
+    """Everything appended below the email body: the 'add to every email' text, signature, address, opt-out."""
     lines = [settings.get("signature", "").strip()]
     addr = settings.get("postal_address", "").strip()
     if addr:
@@ -51,7 +52,9 @@ def footer(settings, lead):
     opt = settings.get("opt_out_line", "").strip()
     if opt:
         lines.append(opt)
-    return "\n".join(l for l in lines if l)
+    sig = "\n".join(l for l in lines if l)
+    extra = (settings.get("email_addition") or "").strip()
+    return f"{extra}\n\n{sig}" if extra else sig
 
 
 def strip_signature(body):

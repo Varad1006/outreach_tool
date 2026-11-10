@@ -75,10 +75,13 @@
       <div class="row small muted" style="justify-content:space-between"><span>To <b style="color:var(--ink)">{{ lead.email or 'no email' }}</b></span>
         <span class="pill plain">{{ {'ai': '✨ AI draft', 'sheet': 'From sheet', 'manual': 'Edited'}.get(draft.source, draft.source) }}</span></div>
       <label class="field">Subject</label><input type="text" name="subject" value="{{ draft.subject }}">
-      <label class="field">Message</label>
+      <div class="fieldbar"><label class="field" for="body">Message</label>
+        <button type="button" class="sm" data-link-for="body" title="Select text in the message, then click to turn it into a link">{{ icon('external') }} Add link</button></div>
       <textarea name="body" class="editor" id="body">{{ draft.body }}</textarea>
       <div class="row small muted" style="justify-content:space-between;margin-top:4px"><span id="wc"></span>{% if draft.state == 'failed' %}<span class="bad">Last send failed: {{ draft.error }}</span>{% endif %}</div>
       <div class="sig">{{ preview_footer }}</div>
+      <details style="margin-top:8px"><summary class="small muted">{{ icon('eye') }} Preview as the recipient sees it</summary>
+        <div class="preview-mail" style="margin-top:8px"><div data-preview-for="body"></div><div class="pm-sig">{{ preview_footer }}</div></div></details>
       <div class="row" style="margin-top:14px">
         <input type="text" name="instructions" class="grow" placeholder="Tell the AI what to change: shorter, mention Arabic support, more casual…">
         <button name="action" value="ai" class="ai" data-busy="Writing…">{{ icon('sparkles') }} Write with AI</button>
@@ -116,7 +119,7 @@
 </div>
 </div>
 {% endblock %}
-{% block scripts %}<script>
+{% block scripts %}<script src="{{ url_for('static', filename='links.js') }}"></script><script>
 const b = document.getElementById('body'), wc = document.getElementById('wc');
 if (b) { const u = () => wc.textContent = (b.value.trim().split(/\s+/).filter(Boolean).length) + ' words'; b.addEventListener('input', u); u(); }
 </script>{% endblock %}

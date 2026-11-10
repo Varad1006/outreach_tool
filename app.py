@@ -241,21 +241,39 @@ def sender_loop():
 
 def ai_loop():
     while True:
-        lead_id, step, instructions = AI_QUEUE.get()
+        item = AI_QUEUE.get()
         JOBS["running"] = True
         try:
             settings = db.get_settings()
-            with db.tx() as conn:
-                lead = get_lead(conn, lead_id)
-                prev = sent_emails(conn, lead_id)
-            out = ai.draft_email(lead, step, settings, instructions, prev)
-            with db.tx() as conn:
-                save_draft(conn, lead, step, out["subject"], out["body"], "ai")
+            if item.get("kind") == "revise":
+                with db.tx() as conn:
+                    em = conn.execute("SELECT * FROM emails WHERE id=? AND state IN ('draft','failed')", (item["email_id"],)).fetchone()
+                    if not em:
+                        continue  # sent, queued or deleted since it was picked: leave it alone
+                    lead = get_lead(conn, em["lead_id"])
+                    prev = sent_emails(conn, em["lead_id"])
+                out = ai.revise_email(lead, em["step"], settings, em["subject"], em["body"], prev)
+                with db.tx() as conn:
+                    save_draft(conn, lead, em["step"], out["subject"], out["body"], "ai", em["id"])
+            else:
+                with db.tx() as conn:
+                    lead = get_lead(conn, item["lead_id"])
+                    prev = sent_emails(conn, item["lead_id"])
+                out = ai.draft_email(lead, item["step"], settings, item.get("instructions", ""), prev)
+                with db.tx() as conn:
+                    save_draft(conn, lead, item["step"], out["subject"], out["body"], "ai")
         except Exception as e:  # noqa: BLE001
-            JOBS["errors"].append(f"Lead {lead_id}: {e}")
+            JOBS["errors"].append(f"{item.get('label', 'Email')}: {e}")
         finally:
             JOBS["done"] += 1
             JOBS["running"] = not AI_QUEUE.empty()
+
+
+def queue_ai(item):
+    if JOBS["done"] >= JOBS["total"]:
+        JOBS.update(total=0, done=0, errors=[])
+    JOBS["total"] += 1
+    AI_QUEUE.put(item)
 
 
 def start_workers():
@@ -488,10 +506,8 @@ def bulk():
                     subj, b = sheet_draft(conn, lead, step)
                     save_draft(conn, lead, step, subj, b, "sheet")
                 else:
-                    if JOBS["done"] >= JOBS["total"]:
-                        JOBS.update(total=0, done=0, errors=[])
-                    JOBS["total"] += 1
-                    AI_QUEUE.put((lid, step, request.form.get("instructions", "")))
+                    queue_ai({"kind": "draft", "lead_id": lid, "step": step, "label": lead["company"],
+                              "instructions": request.form.get("instructions", "")})
                 done += 1
         flash(f"{'Drafted' if action == 'draft_sheet' else 'Writing AI drafts for'} {done} lead(s)." +
               (" AI drafts appear as they finish (refresh)." if action == "draft_ai" else ""))
@@ -989,8 +1005,33 @@ def settings_page():
         flash("Settings saved.")
         return redirect(url_for("settings_page"))
     c = mailer.cfg()
+    with db.tx() as conn:
+        n_drafts = conn.execute("SELECT COUNT(*) FROM emails WHERE state IN ('draft','failed')").fetchone()[0]
     return render_template("settings.html", s=db.get_settings(), from_email=c["from_email"], model=ai.MODEL,
-                           smtp_host=c["smtp_host"], imap_host=c["imap_host"])
+                           smtp_host=c["smtp_host"], imap_host=c["imap_host"], n_drafts=n_drafts)
+
+
+@app.post("/settings/rules")
+def settings_rules():
+    db.set_setting("email_addition", request.form.get("email_addition", "").strip())
+    db.set_setting("email_rules", request.form.get("email_rules", "").strip())
+    if request.form.get("action") != "apply":
+        flash("Rules saved. The 'add to every email' text now shows in every draft; AI rules apply to new AI drafts.")
+        return redirect(url_for("settings_page") + "#rules")
+    if not request.form.get("email_rules", "").strip():
+        flash("Write at least one AI rule first. The fixed text already appears in every email without AI.", "error")
+        return redirect(url_for("settings_page") + "#rules")
+    if not ai.configured():
+        flash("Rewriting drafts needs Claude: add ANTHROPIC_API_KEY to .env.", "error")
+        return redirect(url_for("settings_page") + "#rules")
+    with db.tx() as conn:
+        drafts = conn.execute("SELECT e.id, l.company FROM emails e JOIN leads l ON l.id=e.lead_id "
+                              "WHERE e.state IN ('draft','failed') ORDER BY e.id").fetchall()
+    for d in drafts:
+        queue_ai({"kind": "revise", "email_id": d["id"], "label": d["company"]})
+    flash(f"Rules saved. Rewriting {len(drafts)} draft{'s' if len(drafts) != 1 else ''} in the background; "
+          "progress shows at the top of the page." if drafts else "Rules saved. There are no drafts to rewrite yet.")
+    return redirect(url_for("leads_page", view="drafts") if drafts else url_for("settings_page") + "#rules")
 
 
 @app.post("/settings/test")

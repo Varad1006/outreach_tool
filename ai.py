@@ -117,6 +117,12 @@ def lead_context(lead):
     return "\n".join(f"{k}: {v}" for k, v in fields if v not in (None, ""))
 
 
+def rules_text(settings):
+    """The sender's rules for every email (Settings > Rules for every email)."""
+    r = (settings.get("email_rules") or "").strip()
+    return f"\n\nRules the sender wants in EVERY email (follow them unless they conflict with the facts):\n{r}" if r else ""
+
+
 def draft_email(lead, step, settings, instructions="", previous=None):
     """Write a personalised email for a lead. Returns {subject, body, why}."""
     system = (
@@ -125,8 +131,9 @@ def draft_email(lead, step, settings, instructions="", previous=None):
         "exclamation marks, no 'I hope this finds you well'. Use only facts given in the lead data; never invent "
         "numbers, clients or results. Address the decision-maker by first name. If the email is going to a "
         "general inbox, start the body with an 'FAO <name>, <title>' line. Plain text only. Do NOT include a "
-        "signature, sign-off name, unsubscribe line or postal address - those are appended automatically.\n\n"
-        f"About the sender:\n{settings.get('about_me', '')}"
+        "signature, sign-off name, unsubscribe line or postal address - those are appended automatically. "
+        "If you include a link, write it as [text](https://...).\n\n"
+        f"About the sender:\n{settings.get('about_me', '')}" + rules_text(settings)
     )
     parts = [f"Write {STEP_GUIDE.get(step, STEP_GUIDE[0])}", "", "Lead data:", lead_context(lead)]
     reference = {0: lead.get("sheet_email1"), 1: lead.get("sheet_fu1"), 2: lead.get("sheet_fu2")}.get(step)
@@ -143,6 +150,24 @@ def draft_email(lead, step, settings, instructions="", previous=None):
         parts += ["", f"Extra instructions from the sender: {instructions}"]
     parts += ["", "In 'why', give one sentence on the angle you chose."]
     return _json_call(system, "\n".join(parts), DRAFT_SCHEMA, effort="medium")
+
+
+def revise_email(lead, step, settings, subject, body, previous=None):
+    """Apply the sender's global rules to an existing draft, changing as little else as possible."""
+    system = (
+        "You edit cold-email drafts for a solo AI automation engineer. Apply the sender's rules to the draft and "
+        "keep everything else (facts, tone, structure, links written as [text](url)) as close to the original as "
+        "possible. Never invent facts. Plain text only. No signature, sign-off name or unsubscribe line."
+        + rules_text(settings)
+    )
+    parts = [f"This is the {'first email' if step == 0 else f'follow-up {step}'} to {lead.get('company')}.",
+             "", "Lead data (for reference only):", lead_context(lead)[:3000]]
+    if previous:
+        parts += ["", "Earlier emails in this thread:"] + [f"--- {p['subject']}\n{p['body']}" for p in previous]
+    parts += ["", f"Current subject: {subject}", "Current draft:", body, "",
+              "Return the revised subject and body." + (" Keep the subject unchanged (same thread)." if step > 0 else "")
+              + " In 'why', list the changes you made in one sentence."]
+    return _json_call(system, "\n".join(parts), DRAFT_SCHEMA, effort="low")
 
 
 # ---------------------------------------------------------------- scraper agent
@@ -209,7 +234,7 @@ def enrich_scraped(facts, base, settings, segment="other"):
         "emojis, no exclamation marks. Emails: address the decision-maker by first name (or 'Hi there' if unknown); "
         "if the best email is a general inbox, start email1 with 'FAO <name>, <title>'. No signature or "
         "unsubscribe line (added automatically).\n\n"
-        f"About the seller:\n{settings.get('about_me', '')}"
+        f"About the seller:\n{settings.get('about_me', '')}" + rules_text(settings)
     )
     prompt = "\n".join([
         SEGMENT_HINT.get(segment, "Work out the industry from the pages."),
